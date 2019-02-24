@@ -71,17 +71,18 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
     if (exp >= 255)
       return INFINITY;
     else
-      return DECADE_LO + ((candidate - DECADE_LO)| (exp << 55));
+      return DECADE_LO + ((candidate - DECADE_LO)| ((uint64_t)exp << 55));
   }
   else {
     while (exp > 0 && i < DECADE_LO) {
       exp--;
       i *= UINT64_C(10);
     }
-    if (i < DECADE_LO)
-      return i;
-    else
-      return DECADE_LO + ((i - DECADE_LO) | ((uint64_t)exp << 55));
+    // This expression is the correct one for the normalized case.
+    // It works by miracle for the denormalized case (despite
+    // i - DECADE_LO underflowing to 0xffff… in this case) because exp is
+    // also 0 in this case.
+    return DECADE_LO + ((i - DECADE_LO) | ((uint64_t)exp << 55));
   }
 }
 
