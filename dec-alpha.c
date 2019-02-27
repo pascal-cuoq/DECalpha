@@ -128,7 +128,7 @@ decalpha from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
 }
 
 /* add two positive normal, subnormal or zero decalpha numbers */
-decalpha add(decalpha x, decalpha y) {
+decalpha add_pos_pos(decalpha x, decalpha y) {
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
   uint64_t xsd;
   int xexp;
@@ -181,6 +181,51 @@ decalpha add(decalpha x, decalpha y) {
   return from_large_integer_and_biased_exp(lsd + ssd, sexp, extra);
 }
 
+/* subtract two positive normal, subnormal or zero decalpha numbers,
+   y being less than x. */
+decalpha sub_pos_pos(decalpha x, decalpha y) {
+  int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
+  uint64_t xsd;
+  int xexp;
+  if (xo < 0) { // subnormal or zero
+    xexp = 0;
+    xsd = x;
+  }
+  else {
+    xexp = xo >> 55;
+    xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
+  }
+  int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
+  uint64_t ysd;
+  int yexp;
+  if (yo < 0) { // subnormal or zero
+    yexp = 0;
+    ysd = y;
+  }
+  else {
+    yexp = yo >> 55;
+    ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
+  }
+  if (xexp == yexp ||
+      (xexp == yexp + 1 && ((xsd *= UINT64_C(10)), 1))) {
+    return from_integer_and_biased_exp(xsd - ysd, yexp);
+  }
+  xexp-=2;
+  xsd *= UINT64_C(100);
+  _Bool extra = 0;
+  while (xexp != yexp) {
+    uint64_t d = ysd / UINT64_C(10);
+    uint64_t r = ysd % UINT64_C(10);
+    extra |= (r != 0);
+    ysd = d;
+    yexp++;
+  }
+  // if the initial y was slightly more than ysd * 10^yexp, then
+  // use (ysd-1) * 10^yexp + extra, which gives the same end result
+  ysd -= extra;
+  return from_large_integer_and_biased_exp(xsd - ysd, yexp, extra);
+}
+
 decalpha neg(decalpha x) {
   return x ^ UINT64_C(0x8000000000000000);
 }
@@ -208,21 +253,26 @@ int main(void)
   print(one);puts("");
   print(one + 1);puts("");
   puts("...");
-  decalpha two = add(one, one);
+  decalpha two = add_pos_pos(one, one);
   print(two);puts("");
   puts("...");
-  decalpha three = add(two, one);
+  decalpha three = add_pos_pos(two, one);
   print(three);puts("");
   puts("...");
-  decalpha five = add(two, three);
+  decalpha five = add_pos_pos(two, three);
   print(five);puts("");
   puts("...");
-  decalpha eight = add(five, three);
+  decalpha eight = add_pos_pos(five, three);
   print(eight);puts("");
   puts("...");
   print(0x4000000000000000);puts("");
   print(INFINITY - 2);puts("");
   print(INFINITY - 1);puts("");
   print(INFINITY);puts("");
-  print(INFINITY + 1);puts("");
+  print(INFINITY + 1);puts("\n");
+  decalpha x = eight;
+  for (int i = 8; i>0; i--) {
+    x = sub_pos_pos(x, one);
+    print(x);puts("");
+  }
 }
