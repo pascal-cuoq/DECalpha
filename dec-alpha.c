@@ -206,8 +206,11 @@ decalpha sub_pos_pos(decalpha x, decalpha y) {
     yexp = yo >> 55;
     ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
   }
-  if (xexp == yexp ||
-      (xexp == yexp + 1 && ((xsd *= UINT64_C(10)), 1))) {
+  _Bool one_decade_above = (xexp == yexp + 1);
+  if (one_decade_above) {
+    xsd *= UINT64_C(10);
+  }
+  if (one_decade_above || xexp == yexp) {
     return from_integer_and_biased_exp(xsd - ysd, yexp);
   }
   xexp-=2;
