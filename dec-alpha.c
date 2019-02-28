@@ -13,6 +13,24 @@ typedef uint64_t decalpha;
 // The DEC alpha value +inf
 #define INFINITY (UINT64_C(0x7f80000000000000)+DECADE_LO)
 
+uint64_t powers[16]= {
+  1,
+  10,
+  1e2,
+  1e3,
+  1e4,
+  1e5,
+  1e7,
+  1e8,
+  1e9,
+  1e10,
+  1e11,
+  1e12,
+  1e13,
+  1e14,
+  1e15,
+};
+
 // Prints a DEC alpha in somehwat human-readable form
 void print(decalpha n) {
   uint64_t a = n & UINT64_C(0x7fffffffffffffff);
@@ -129,56 +147,50 @@ decalpha from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
 
 /* add two positive normal, subnormal or zero decalpha numbers */
 decalpha add_pos_pos(decalpha x, decalpha y) {
-  int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
-  uint64_t xsd;
-  int xexp;
-  if (xo < 0) { // subnormal or zero
-    xexp = 0;
-    xsd = x;
-  }
-  else {
-    xexp = xo >> 55;
-    xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
-  }
-  int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
-  uint64_t ysd;
-  int yexp;
-  if (yo < 0) { // subnormal or zero
-    yexp = 0;
-    ysd = y;
-  }
-  else {
-    yexp = yo >> 55;
-    ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
-  }
-  if (xexp == yexp) {
-    return from_integer_and_biased_exp(xsd + ysd, xexp);
-  }
-  uint64_t lsd, ssd;
+  uint64_t l, s, lsd, ssd;
   int lexp, sexp;
-  if (xexp > yexp) {
-    lexp = xexp;
-    lsd = xsd;
-    sexp = yexp;
-    ssd = ysd;
+  if (x > y) {
+    l = x;
+    s = y;
   }
   else {
-    lexp = yexp;
-    lsd = ysd;
-    sexp = xexp;
-    ssd = xsd;
+    l = y;
+    s = x;
   }
+  int64_t lo = (int64_t)l - (int64_t)DECADE_LO;
+  if (lo < 0) { // subnormal or zero
+    lexp = 0;
+    lsd = l;
+  }
+  else {
+    lexp = lo >> 55;
+    lsd = DECADE_LO + (lo & UINT64_C(0x7fffffffffffff));
+  }
+  int64_t so = (int64_t)s - (int64_t)DECADE_LO;
+  if (so < 0) { // subnormal or zero
+    sexp = 0;
+    ssd = s;
+  }
+  else {
+    sexp = so >> 55;
+    ssd = DECADE_LO + (so & UINT64_C(0x7fffffffffffff));
+  }
+
+  if (lexp == sexp) {
+    return from_integer_and_biased_exp(lsd + ssd, lexp);
+  }
+  if (lexp - sexp >= 17) {
+    return l;
+  }
+
   lexp--;
   lsd *= UINT64_C(10);
-  _Bool extra = 0;
-  while (lexp != sexp) {
-    uint64_t d = ssd / UINT64_C(10);
-    uint64_t r = ssd % UINT64_C(10);
-    extra |= (r != 0);
-    ssd = d;
-    sexp++;
-  }
-  return from_large_integer_and_biased_exp(lsd + ssd, sexp, extra);
+  uint64_t power_diff = powers[lexp - sexp];
+  uint64_t d = ssd / power_diff;
+  uint64_t r = ssd % power_diff;
+  _Bool extra = (r != 0);
+
+  return from_large_integer_and_biased_exp(lsd + d, lexp, extra);
 }
 
 /* subtract two positive normal, subnormal or zero decalpha numbers,
@@ -206,6 +218,9 @@ decalpha sub_pos_pos(decalpha x, decalpha y) {
     yexp = yo >> 55;
     ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
   }
+  if (xexp - yexp >= 18) {
+    return x;
+  }
   _Bool one_decade_above = (xexp == yexp + 1);
   if (one_decade_above) {
     xsd *= UINT64_C(10);
@@ -215,18 +230,15 @@ decalpha sub_pos_pos(decalpha x, decalpha y) {
   }
   xexp-=2;
   xsd *= UINT64_C(100);
-  _Bool extra = 0;
-  while (xexp != yexp) {
-    uint64_t d = ysd / UINT64_C(10);
-    uint64_t r = ysd % UINT64_C(10);
-    extra |= (r != 0);
-    ysd = d;
-    yexp++;
-  }
-  // if the initial y was slightly more than ysd * 10^yexp, then
-  // use (ysd-1) * 10^yexp + extra, which gives the same end result
-  ysd -= extra;
-  return from_large_integer_and_biased_exp(xsd - ysd, yexp, extra);
+
+  uint64_t power_diff = powers[xexp - yexp];
+  uint64_t d = ysd / power_diff;
+  uint64_t r = ysd % power_diff;
+  _Bool extra = (r != 0);
+  // if the initial y was slightly more than d * 10^xexp, then
+  // compute (x - (d+1)*10^xexp) + extra, which gives the same end result
+  d += extra;
+  return from_large_integer_and_biased_exp(xsd - d, xexp, extra);
 }
 
 decalpha neg(decalpha x) {
