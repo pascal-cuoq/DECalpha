@@ -32,7 +32,7 @@ uint64_t powers[16]= {
   1e15,
 };
 
-// Prints a DEC alpha in somehwat human-readable form
+// Prints a DEC alpha in somewhat human-readable form
 void print(decalpha n) {
   uint64_t a = n & UINT64_C(0x7fffffffffffffff);
   if (a != n) printf("-");
@@ -112,19 +112,20 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
   requires i > DECADE_HI;
 */
 decalpha from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
-  uint64_t factor, tenth;
+  uint64_t factor, tenth, candidate, remainder;
   if (i > DECADE_HI * UINT64_C(10)) {
     factor = 100;
+    candidate = i / 100;
     tenth = 10;
     exp += 2;
   }
   else {
     factor = 10;
+    candidate = i / 10;
     tenth = 1;
     exp++;
   }
-  uint64_t candidate = i / factor;
-  uint64_t remainder = i % factor;
+  remainder = i - candidate*factor;
   uint64_t half;
   if (candidate == DECADE_HI) {
     half = 4 * tenth;
