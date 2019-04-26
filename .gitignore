@@ -5,6 +5,9 @@
 # Prerequisites
 *.d
 
+# Assembly
+*.s
+
 # Object files
 *.o
 *.ko

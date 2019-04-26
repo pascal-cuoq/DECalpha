@@ -4,6 +4,10 @@
 
 typedef uint64_t decalpha;
 
+typedef __uint128_t ulll;
+  /* needed for access to 64x64->128 multiplication and 128/64->64 division
+     that the host processor hopefully provides. */
+
 // Decades range from DECADE_LO to DECADE_HI
 #define DECADE_LO UINT64_C(4003199668773775)
 #define DECADE_HI UINT64_C(40031996687737742)
@@ -77,7 +81,7 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
     uint64_t half;
     if (candidate == DECADE_HI) {
       half = 4 * tenth;
-      if (remainder > half) {
+      if (remainder > half) { // DECADE_LO is odd ?:(
         candidate = DECADE_LO;
         exp++;
       }
@@ -247,6 +251,66 @@ decalpha neg(decalpha x) {
   return x ^ UINT64_C(0x8000000000000000);
 }
 
+decalpha mult_pos_pos(decalpha x, decalpha y) {
+  int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
+  uint64_t xsd;
+  int xexp;
+  if (xo < 0) { // subnormal or zero
+    xexp = 0;
+    xsd = x;
+  }
+  else {
+    xexp = xo >> 55;
+    xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
+  }
+  int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
+  uint64_t ysd;
+  int yexp;
+  if (yo < 0) { // subnormal or zero
+    yexp = 0;
+    ysd = y;
+  }
+  else {
+    yexp = yo >> 55;
+    ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
+  }
+  int exp = xexp + yexp - 123;
+  ulll m = (ulll)xsd * (ulll)ysd;
+  /*
+  if (m < (ulll)DECADE_LO * (ulll)1e17)
+    if (m < (ulll)DECADE_LO * (ulll)1e16) {
+      m *= (ulll)100;
+      exp -= 2;
+    }
+    else {
+      m *= (ulll)10;
+      exp -= 1;
+    }
+  */
+  if (m == 0)
+    return 0;
+  while (m < (ulll)DECADE_LO * (ulll)1e17) {
+      m *= (ulll)10;
+      exp -= 1;
+  }
+  // ignore subnormal results for now
+  uint64_t sd = m / (ulll)1e17;
+  uint64_t rem = m % (ulll)1e17;
+
+  if (sd >= DECADE_HI + 4 ||
+      sd == DECADE_HI + 4 && rem > 0) { // DECADE_LO is odd
+    exp++;
+    sd = DECADE_LO;
+  }
+  else if (sd >= DECADE_HI - 5) { // DECADE_HI is even
+    sd = DECADE_HI;
+  }
+  else if (rem > (uint64_t)5e16 || rem == (uint64_t)5e16 && (sd & 1))
+    sd++;
+  if (exp >= 0xff) return INFINITY;
+  return DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55));
+}
+
 int main(void)
 {
   print(0);puts("");
@@ -292,4 +356,10 @@ int main(void)
     x = sub_pos_pos(x, one);
     print(x);puts("");
   }
+  x = mult_pos_pos(five, eight);
+  print(x);puts(" (8*5)");
+  x = mult_pos_pos(eight, eight);
+  print(x);puts(" (8*8)");
+  x = mult_pos_pos(five, five);
+  print(x);puts(" (5*5)");
 }
