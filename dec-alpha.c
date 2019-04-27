@@ -338,28 +338,37 @@ int main(void)
   print(two);puts("");
   puts("...");
   decalpha three = add_pos_pos(two, one);
-  print(three);puts("");
+  print(three);puts(" (2+1)");
   puts("...");
   decalpha five = add_pos_pos(two, three);
-  print(five);puts("");
+  print(five);puts(" (2+3)");
   puts("...");
   decalpha eight = add_pos_pos(five, three);
-  print(eight);puts("");
+  print(eight);puts(" (5+3))");
+  puts("...");
+  decalpha eleven = add_pos_pos(eight, three);
+  print(eleven);puts(" (8+3)");
   puts("...");
   print(0x4000000000000000);puts("");
   print(INFINITY - 2);puts("");
   print(INFINITY - 1);puts("");
   print(INFINITY);puts("");
-  print(INFINITY + 1);puts("\n");
-  decalpha x = eight;
-  for (int i = 8; i>0; i--) {
+  print(INFINITY + 1);puts("\n\nCountdown:");
+  decalpha x = eleven;
+  for (int i = 11; i>0; i--) {
     x = sub_pos_pos(x, one);
     print(x);puts("");
   }
+  puts("\nMultiplication:");
   x = mult_pos_pos(five, eight);
   print(x);puts(" (8*5)");
   x = mult_pos_pos(eight, eight);
   print(x);puts(" (8*8)");
   x = mult_pos_pos(five, five);
   print(x);puts(" (5*5)");
+  decalpha third = from_integer_and_biased_exp(333333333333333333,122);
+  print(mult_pos_pos(third, three));puts(" (3*.333...)");
+  decalpha ninth = mult_pos_pos(third, third);
+  print(ninth);puts(" (.333...*.333...)");
+  print(mult_pos_pos(ninth, eleven));puts(" (11*.111...)");
 }
