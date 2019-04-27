@@ -308,6 +308,8 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
   else if (rem > (uint64_t)5e16 || rem == (uint64_t)5e16 && (sd & 1))
     sd++;
   if (exp >= 0xff) return INFINITY;
+  if (exp<=0) // FIXME
+    return 0;
   return DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55));
 }
 
@@ -349,9 +351,10 @@ int main(void)
   decalpha eleven = add_pos_pos(eight, three);
   print(eleven);puts(" (8+3)");
   puts("...");
-  print(0x4000000000000000);puts("");
+  print(0x4000000000000000);puts("\n...");
   print(INFINITY - 2);puts("");
-  print(INFINITY - 1);puts("");
+  decalpha DA_MAX=INFINITY - 1;
+  print(DA_MAX);puts(" DA_MAX");
   print(INFINITY);puts("");
   print(INFINITY + 1);puts("\n\nCountdown:");
   decalpha x = eleven;
@@ -371,4 +374,12 @@ int main(void)
   decalpha ninth = mult_pos_pos(third, third);
   print(ninth);puts(" (.333...*.333...)");
   print(mult_pos_pos(ninth, eleven));puts(" (11*.111...)");
+  print(mult_pos_pos(1, DA_MAX));puts(" (1E-140*DA_MAX)");
+  print(mult_pos_pos(9, DA_MAX));puts(" (9E-140*DA_MAX)");
+  print(mult_pos_pos(987654321, DA_MAX));puts(" (987654321E-140*DA_MAX)");
+  puts("\nSubnormal result of *");
+  print(mult_pos_pos(1001, from_integer_and_biased_exp(999,140)));
+  puts(" (1001E-140*999)");
+  print(mult_pos_pos(from_integer_and_biased_exp(99999,70),from_integer_and_biased_exp(10000001,70)));
+  puts(" (99999E-70*10000001E-70)");
 }
