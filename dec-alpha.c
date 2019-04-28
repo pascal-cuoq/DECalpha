@@ -17,7 +17,7 @@ typedef __uint128_t ulll;
 // The DEC alpha value +inf
 #define INFINITY (UINT64_C(0x7f80000000000000)+DECADE_LO)
 
-uint64_t powers[16]= {
+uint64_t powers[17]= {
   1,
   10,
   1e2,
@@ -34,6 +34,7 @@ uint64_t powers[16]= {
   1e13,
   1e14,
   1e15,
+  1e16,
 };
 
 // Prints a DEC alpha in somewhat human-readable form
@@ -294,8 +295,20 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
       exp -= 1;
   }
   // ignore subnormal results for now
-  uint64_t sd = m / (ulll)1e17;
-  uint64_t rem = m % (ulll)1e17;
+  uint64_t sd;
+  uint64_t rem;
+  sd = m / (uint64_t)1e17;
+  rem = m % (uint64_t)1e17;
+  if (exp < 0) {
+    if (exp < -16) return 0;
+    uint64_t p = powers[-exp];
+    uint64_t rsd = sd / p;
+    uint64_t rrem = sd % p;
+    uint64_t half = p >> 1;
+    if (rrem > half || rrem == half && (rem || (sd & 1)))
+      rsd++;
+    return rsd; // exp is 0
+  }
 
   if (sd >= DECADE_HI + 4 ||
       sd == DECADE_HI + 4 && rem > 0) { // DECADE_LO is odd
@@ -308,7 +321,7 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
   else if (rem > (uint64_t)5e16 || rem == (uint64_t)5e16 && (sd & 1))
     sd++;
   if (exp >= 0xff) return INFINITY;
-  if (exp<=0) // FIXME
+  if (exp<0) // FIXME
     return 0;
   return DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55));
 }
@@ -377,9 +390,17 @@ int main(void)
   print(mult_pos_pos(1, DA_MAX));puts(" (1E-140*DA_MAX)");
   print(mult_pos_pos(9, DA_MAX));puts(" (9E-140*DA_MAX)");
   print(mult_pos_pos(987654321, DA_MAX));puts(" (987654321E-140*DA_MAX)");
-  puts("\nSubnormal result of *");
+  puts("\nSubnormal result of multiplication");
   print(mult_pos_pos(1001, from_integer_and_biased_exp(999,140)));
   puts(" (1001E-140*999)");
   print(mult_pos_pos(from_integer_and_biased_exp(99999,70),from_integer_and_biased_exp(10000001,70)));
   puts(" (99999E-70*10000001E-70)");
+  print(mult_pos_pos(from_integer_and_biased_exp(1234567899999,70),from_integer_and_biased_exp(1001,70)));
+  puts(" (1234567899999E-70*1001E-70)");
+  print(mult_pos_pos(from_integer_and_biased_exp(123456,69),from_integer_and_biased_exp(10000001,60)));
+  puts(" (123456E-69*10000001E-60)");
+  print(mult_pos_pos(from_integer_and_biased_exp(523456,68),from_integer_and_biased_exp(10000001,59)));
+  puts(" (523456E-68*10000001E-59)");
+  print(mult_pos_pos(from_integer_and_biased_exp(423456,68),from_integer_and_biased_exp(10000001,59)));
+  puts(" (423456E-68*10000001E-59)");
 }
