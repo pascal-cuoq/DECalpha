@@ -2,7 +2,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-typedef uint64_t decalpha;
+typedef struct { uint64_t r;} decalpha;
 
 typedef __uint128_t ulll;
   /* needed for access to 64x64->128 multiplication and 128/64->64 division
@@ -12,12 +12,15 @@ typedef __uint128_t ulll;
 #define DECADE_LO UINT64_C(4003199668773775)
 #define DECADE_HI UINT64_C(40031996687737742)
 
+#define WRAP(sd, exp) \
+  (decalpha){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55))}
+
 #define EXP_MIN (-140)
 
-// The DEC alpha value +inf
-#define INFINITY (UINT64_C(0x7f80000000000000)+DECADE_LO)
+static const decalpha INFINITY = {UINT64_C(0x7f80000000000000)+DECADE_LO};
+static const decalpha POS_ZERO = {0};
 
-uint64_t powers[17]= {
+static uint64_t powers[17]= {
   1,
   10,
   1e2,
@@ -38,7 +41,8 @@ uint64_t powers[17]= {
 };
 
 // Prints a DEC alpha in somewhat human-readable form
-void print(decalpha n) {
+void print(decalpha d) {
+  uint64_t n = d.r;
   uint64_t a = n & UINT64_C(0x7fffffffffffffff);
   if (a != n) printf("-");
   int64_t o = (int64_t)a - (int64_t)DECADE_LO;
@@ -95,7 +99,7 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
     if (exp >= 255)
       return INFINITY;
     else
-      return DECADE_LO + ((candidate - DECADE_LO)| ((uint64_t)exp << 55));
+      return WRAP(candidate, exp);
   }
   else {
     while (exp > 0 && i < DECADE_LO) {
@@ -106,7 +110,7 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
     // It works by miracle for the denormalized case (despite
     // i - DECADE_LO underflowing to 0xffff… in this case) because exp is
     // also 0 in this case.
-    return DECADE_LO + ((i - DECADE_LO) | ((uint64_t)exp << 55));
+    return WRAP(i, exp);
   }
 }
 
@@ -149,12 +153,12 @@ decalpha from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
   if (exp >= 255)
     return INFINITY;
   else
-    return DECADE_LO + ((candidate - DECADE_LO)| ((uint64_t)exp << 55));
+    return WRAP(candidate, exp);
 }
 
 /* add two positive normal, subnormal or zero decalpha numbers */
-decalpha add_pos_pos(decalpha x, decalpha y) {
-  uint64_t l, s, lsd, ssd;
+decalpha add_pos_pos(decalpha dx, decalpha dy) {
+  uint64_t l, s, lsd, ssd, x = dx.r, y = dy.r;
   int lexp, sexp;
   if (x > y) {
     l = x;
@@ -187,7 +191,7 @@ decalpha add_pos_pos(decalpha x, decalpha y) {
     return from_integer_and_biased_exp(lsd + ssd, lexp);
   }
   if (lexp - sexp >= 17) {
-    return l;
+    return (decalpha){l};
   }
 
   lexp--;
@@ -202,7 +206,8 @@ decalpha add_pos_pos(decalpha x, decalpha y) {
 
 /* subtract two positive normal, subnormal or zero decalpha numbers,
    y being less than x. */
-decalpha sub_pos_pos(decalpha x, decalpha y) {
+decalpha sub_pos_pos(decalpha dx, decalpha dy) {
+  uint64_t x = dx.r, y = dy.r;
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
   uint64_t xsd;
   int xexp;
@@ -226,7 +231,7 @@ decalpha sub_pos_pos(decalpha x, decalpha y) {
     ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
   }
   if (xexp - yexp >= 18) {
-    return x;
+    return (decalpha){x};
   }
   _Bool one_decade_above = (xexp == yexp + 1);
   if (one_decade_above) {
@@ -249,10 +254,11 @@ decalpha sub_pos_pos(decalpha x, decalpha y) {
 }
 
 decalpha neg(decalpha x) {
-  return x ^ UINT64_C(0x8000000000000000);
+  return (decalpha){x.r ^ UINT64_C(0x8000000000000000)};
 }
 
-decalpha mult_pos_pos(decalpha x, decalpha y) {
+decalpha mult_pos_pos(decalpha dx, decalpha dy) {
+  uint64_t x = dx.r, y = dy.r;
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
   uint64_t xsd;
   int xexp;
@@ -289,7 +295,7 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
     }
   */
   if (m == 0)
-    return 0;
+    return POS_ZERO;
   while (m < (ulll)DECADE_LO * (ulll)1e17) {
       m *= (ulll)10;
       exp -= 1;
@@ -300,14 +306,14 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
   sd = m / (uint64_t)1e17;
   rem = m % (uint64_t)1e17;
   if (exp < 0) {
-    if (exp < -16) return 0;
+    if (exp < -16) return POS_ZERO;
     uint64_t p = powers[-exp];
     uint64_t rsd = sd / p;
     uint64_t rrem = sd % p;
     uint64_t half = p >> 1;
     if (rrem > half || rrem == half && (rem || (sd & 1)))
       rsd++;
-    return rsd; // exp is 0
+    return (decalpha){rsd}; // exp is 0
   }
 
   if (sd >= DECADE_HI + 4 ||
@@ -321,33 +327,39 @@ decalpha mult_pos_pos(decalpha x, decalpha y) {
   else if (rem > (uint64_t)5e16 || rem == (uint64_t)5e16 && (sd & 1))
     sd++;
   if (exp >= 0xff) return INFINITY;
-  if (exp<0) // FIXME
-    return 0;
-  return DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55));
+  return WRAP(sd, exp);
+}
+
+// TODO: make work for negative values and corner cases
+decalpha pred(decalpha x) {
+  return (decalpha){x.r - 1};
+}
+decalpha succ(decalpha x) {
+  return (decalpha){x.r + 1};
 }
 
 int main(void)
 {
-  print(0);puts("");
-  print(1);puts("");
-  print(2);puts("");
+  print((decalpha){0});puts("");
+  print((decalpha){1});puts("");
+  print((decalpha){2});puts("");
   puts("...");
-  print(DECADE_LO-2);puts("");
-  print(DECADE_LO-1);puts("");
-  print(DECADE_LO);puts("");
-  print(DECADE_LO+1);puts("");
-  print(DECADE_LO+2);puts("");
+  print((decalpha){DECADE_LO-2});puts("");
+  print((decalpha){DECADE_LO-1});puts("");
+  print((decalpha){DECADE_LO});puts("");
+  print((decalpha){DECADE_LO+1});puts("");
+  print((decalpha){DECADE_LO+2});puts("");
   puts("...");
-  print(DECADE_HI-2);puts("");
-  print(DECADE_HI-1);puts("");
-  print(DECADE_HI);puts("");
-  print(DECADE_HI+1);puts("");
-  print(DECADE_HI+2);puts("");
+  print((decalpha){DECADE_HI-2});puts("");
+  print((decalpha){DECADE_HI-1});puts("");
+  print((decalpha){DECADE_HI});puts("");
+  print((decalpha){DECADE_HI+1});puts("");
+  print((decalpha){DECADE_HI+2});puts("");
   puts("...");
   decalpha one = from_integer_and_biased_exp(1,140);
-  print(one - 1);puts("");
+  print(pred(one));puts("");
   print(one);puts("");
-  print(one + 1);puts("");
+  print(succ(one));puts("");
   puts("...");
   decalpha two = add_pos_pos(one, one);
   print(two);puts("");
@@ -364,12 +376,12 @@ int main(void)
   decalpha eleven = add_pos_pos(eight, three);
   print(eleven);puts(" (8+3)");
   puts("...");
-  print(0x4000000000000000);puts("\n...");
-  print(INFINITY - 2);puts("");
-  decalpha DA_MAX=INFINITY - 1;
+  print((decalpha){0x4000000000000000});puts("\n...");
+  decalpha DA_MAX=pred(INFINITY);
+  print(pred(DA_MAX));puts("");
   print(DA_MAX);puts(" DA_MAX");
   print(INFINITY);puts("");
-  print(INFINITY + 1);puts("\n\nCountdown:");
+  print(succ(INFINITY));puts("\n\nCountdown:");
   decalpha x = eleven;
   for (int i = 11; i>0; i--) {
     x = sub_pos_pos(x, one);
@@ -387,11 +399,13 @@ int main(void)
   decalpha ninth = mult_pos_pos(third, third);
   print(ninth);puts(" (.333...*.333...)");
   print(mult_pos_pos(ninth, eleven));puts(" (11*.111...)");
-  print(mult_pos_pos(1, DA_MAX));puts(" (1E-140*DA_MAX)");
-  print(mult_pos_pos(9, DA_MAX));puts(" (9E-140*DA_MAX)");
-  print(mult_pos_pos(987654321, DA_MAX));puts(" (987654321E-140*DA_MAX)");
-  puts("\nSubnormal result of multiplication");
-  print(mult_pos_pos(1001, from_integer_and_biased_exp(999,140)));
+  puts("\nMultiplication of subnormal operand:");
+  print(mult_pos_pos((decalpha){1}, DA_MAX));puts(" (1E-140*DA_MAX)");
+  print(mult_pos_pos((decalpha){9}, DA_MAX));puts(" (9E-140*DA_MAX)");
+  print(mult_pos_pos((decalpha){987654321}, DA_MAX));
+  puts(" (987654321E-140*DA_MAX)");
+  puts("\nSubnormal result of multiplication:");
+  print(mult_pos_pos((decalpha){1001}, from_integer_and_biased_exp(999,140)));
   puts(" (1001E-140*999)");
   print(mult_pos_pos(from_integer_and_biased_exp(99999,70),from_integer_and_biased_exp(10000001,70)));
   puts(" (99999E-70*10000001E-70)");
