@@ -16,6 +16,9 @@ typedef __uint128_t ulll;
    shift by EXP_SHIFT to obtain the biased exponent: */
 #define EXP_SHIFT 55
 
+#define SIGN_MASK UINT64_C(0x8000000000000000)
+#define SD_MASK UINT64_C(0x7fffffffffffff)
+
 #define WRAP(sd, exp) \
   (decalpha){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << EXP_SHIFT))}
 
@@ -52,7 +55,7 @@ static uint64_t powers[17]= {
 // Prints a DEC alpha in somewhat human-readable form
 void print(decalpha d) {
   uint64_t n = d.r;
-  uint64_t a = n & UINT64_C(0x7fffffffffffffff);
+  uint64_t a = n & ~SIGN_MASK;
   if (a != n) printf("-");
   int64_t o = (int64_t)a - (int64_t)DECADE_LO;
   if (o < 0) { // subnormal or zero
@@ -60,7 +63,7 @@ void print(decalpha d) {
       return;
     }
   int e = o >> EXP_SHIFT;
-  uint64_t sd = o & UINT64_C(0x7fffffffffffff);
+  uint64_t sd = o & SD_MASK;
   if (e == EXP_INFNAN) {
       if (sd) {
           printf("NaN");
@@ -183,7 +186,7 @@ decalpha add_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     lexp = lo >> EXP_SHIFT;
-    lsd = DECADE_LO + (lo & UINT64_C(0x7fffffffffffff));
+    lsd = DECADE_LO + (lo & SD_MASK);
   }
   int64_t so = (int64_t)s - (int64_t)DECADE_LO;
   if (so < 0) { // subnormal or zero
@@ -192,7 +195,7 @@ decalpha add_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     sexp = so >> EXP_SHIFT;
-    ssd = DECADE_LO + (so & UINT64_C(0x7fffffffffffff));
+    ssd = DECADE_LO + (so & SD_MASK);
   }
 
   if (lexp == sexp) {
@@ -225,7 +228,7 @@ decalpha sub_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     xexp = xo >> EXP_SHIFT;
-    xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
+    xsd = DECADE_LO + (xo & SD_MASK);
   }
   int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
   uint64_t ysd;
@@ -236,7 +239,7 @@ decalpha sub_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     yexp = yo >> EXP_SHIFT;
-    ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
+    ysd = DECADE_LO + (yo & SD_MASK);
   }
   if (xexp - yexp >= 18) {
     return (decalpha){x};
@@ -277,7 +280,7 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     xexp = xo >> EXP_SHIFT;
-    xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
+    xsd = DECADE_LO + (xo & SD_MASK);
   }
   int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
   uint64_t ysd;
@@ -288,7 +291,7 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
   }
   else {
     yexp = yo >> EXP_SHIFT;
-    ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
+    ysd = DECADE_LO + (yo & SD_MASK);
   }
   int exp = xexp + yexp - 123;
   ulll m = (ulll)xsd * (ulll)ysd;
@@ -327,6 +330,28 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
     sd++;
   if (exp >= EXP_INFNAN) return INFINITY;
   return WRAP(sd, exp);
+}
+
+/* multiply two decalpha numbers */
+decalpha mult(decalpha dx, decalpha dy) {
+  uint64_t x = dx.r, y = dy.r;
+  uint64_t sx = x & SIGN_MASK, sy = y & SIGN_MASK;
+  uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK;
+  uint64_t s = sx ^ sy;
+  uint64_t pos;
+  if (posx < INFINITY.r && posy < INFINITY.r)
+    pos = mult_pos_pos((decalpha){posx}, (decalpha){posy}).r;
+  else {
+    if (posx > INFINITY.r) return dx;
+    if (posy > INFINITY.r) return dy;
+    /* There remains only the cases where one argument is inf and the other is
+       not Nan. */
+    if (posx == 0 || posy == 0)
+       return NAN;
+    // There remains only inf * finite
+    pos = INFINITY.r;
+  }
+  return (decalpha){pos | s};
 }
 
 // TODO: make work for negative values and corner cases
