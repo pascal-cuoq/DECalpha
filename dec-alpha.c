@@ -12,12 +12,21 @@ typedef __uint128_t ulll;
 #define DECADE_LO UINT64_C(4003199668773775)
 #define DECADE_HI UINT64_C(40031996687737742)
 
-#define WRAP(sd, exp) \
-  (decalpha){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << 55))}
+/* After subtracting DECADE_LO from the representation of a normal decalpha,
+   shift by EXP_SHIFT to obtain the biased exponent: */
+#define EXP_SHIFT 55
 
+#define WRAP(sd, exp) \
+  (decalpha){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << EXP_SHIFT))}
+
+/* The minimum unbiased exponent: */
 #define EXP_MIN (-140)
 
+/* The biased exponent of inf and NaN: */
+#define EXP_INFNAN 255
+
 static const decalpha INFINITY = {UINT64_C(0x7f80000000000000)+DECADE_LO};
+static const decalpha NAN = {UINT64_C(0x7f80000000000000)+DECADE_LO+1};
 static const decalpha POS_ZERO = {0};
 
 static uint64_t powers[17]= {
@@ -46,14 +55,13 @@ void print(decalpha d) {
   uint64_t a = n & UINT64_C(0x7fffffffffffffff);
   if (a != n) printf("-");
   int64_t o = (int64_t)a - (int64_t)DECADE_LO;
-  if (o < 0) // subnormal or zero
-    {
+  if (o < 0) { // subnormal or zero
       printf("%" PRIu64 "E%d", a, EXP_MIN);
       return;
     }
-  int e = o >> 55;
+  int e = o >> EXP_SHIFT;
   uint64_t sd = o & UINT64_C(0x7fffffffffffff);
-  if (e == 0xff) { // infinity or NaN
+  if (e == EXP_INFNAN) {
       if (sd) {
           printf("NaN");
         }
@@ -86,7 +94,7 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
     uint64_t half;
     if (candidate == DECADE_HI) {
       half = 4 * tenth;
-      if (remainder > half) { // DECADE_LO is odd ?:(
+      if (remainder > half) { // DECADE_LO is odd
         candidate = DECADE_LO;
         exp++;
       }
@@ -96,7 +104,7 @@ decalpha from_integer_and_biased_exp(uint64_t i, int exp) {
       if (remainder > half || (remainder == half && (candidate & UINT64_C(1))))
         candidate++;
     }
-    if (exp >= 255)
+    if (exp >= EXP_INFNAN)
       return INFINITY;
     else
       return WRAP(candidate, exp);
@@ -150,7 +158,7 @@ decalpha from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
     if (above || (halfway && (extra || (candidate & UINT64_C(1)))))
       candidate++;
   }
-  if (exp >= 255)
+  if (exp >= EXP_INFNAN)
     return INFINITY;
   else
     return WRAP(candidate, exp);
@@ -174,7 +182,7 @@ decalpha add_pos_pos(decalpha dx, decalpha dy) {
     lsd = l;
   }
   else {
-    lexp = lo >> 55;
+    lexp = lo >> EXP_SHIFT;
     lsd = DECADE_LO + (lo & UINT64_C(0x7fffffffffffff));
   }
   int64_t so = (int64_t)s - (int64_t)DECADE_LO;
@@ -183,7 +191,7 @@ decalpha add_pos_pos(decalpha dx, decalpha dy) {
     ssd = s;
   }
   else {
-    sexp = so >> 55;
+    sexp = so >> EXP_SHIFT;
     ssd = DECADE_LO + (so & UINT64_C(0x7fffffffffffff));
   }
 
@@ -216,7 +224,7 @@ decalpha sub_pos_pos(decalpha dx, decalpha dy) {
     xsd = x;
   }
   else {
-    xexp = xo >> 55;
+    xexp = xo >> EXP_SHIFT;
     xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
   }
   int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
@@ -227,7 +235,7 @@ decalpha sub_pos_pos(decalpha dx, decalpha dy) {
     ysd = y;
   }
   else {
-    yexp = yo >> 55;
+    yexp = yo >> EXP_SHIFT;
     ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
   }
   if (xexp - yexp >= 18) {
@@ -257,6 +265,7 @@ decalpha neg(decalpha x) {
   return (decalpha){x.r ^ UINT64_C(0x8000000000000000)};
 }
 
+/* multiply two positive normal, subnormal or zero decalpha numbers */
 decalpha mult_pos_pos(decalpha dx, decalpha dy) {
   uint64_t x = dx.r, y = dy.r;
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
@@ -267,7 +276,7 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
     xsd = x;
   }
   else {
-    xexp = xo >> 55;
+    xexp = xo >> EXP_SHIFT;
     xsd = DECADE_LO + (xo & UINT64_C(0x7fffffffffffff));
   }
   int64_t yo = (int64_t)y - (int64_t)DECADE_LO;
@@ -278,29 +287,19 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
     ysd = y;
   }
   else {
-    yexp = yo >> 55;
+    yexp = yo >> EXP_SHIFT;
     ysd = DECADE_LO + (yo & UINT64_C(0x7fffffffffffff));
   }
   int exp = xexp + yexp - 123;
   ulll m = (ulll)xsd * (ulll)ysd;
-  /*
-  if (m < (ulll)DECADE_LO * (ulll)1e17)
-    if (m < (ulll)DECADE_LO * (ulll)1e16) {
-      m *= (ulll)100;
-      exp -= 2;
-    }
-    else {
-      m *= (ulll)10;
-      exp -= 1;
-    }
-  */
+
   if (m == 0)
     return POS_ZERO;
   while (m < (ulll)DECADE_LO * (ulll)1e17) {
-      m *= (ulll)10;
-      exp -= 1;
+    m *= (ulll)10;
+    exp -= 1;
   }
-  // ignore subnormal results for now
+
   uint64_t sd;
   uint64_t rem;
   sd = m / (uint64_t)1e17;
@@ -313,7 +312,7 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
     uint64_t half = p >> 1;
     if (rrem > half || rrem == half && (rem || (sd & 1)))
       rsd++;
-    return (decalpha){rsd}; // exp is 0
+    return (decalpha){rsd}; // exponent is 0
   }
 
   if (sd >= DECADE_HI + 4 ||
@@ -326,7 +325,7 @@ decalpha mult_pos_pos(decalpha dx, decalpha dy) {
   }
   else if (rem > (uint64_t)5e16 || rem == (uint64_t)5e16 && (sd & 1))
     sd++;
-  if (exp >= 0xff) return INFINITY;
+  if (exp >= EXP_INFNAN) return INFINITY;
   return WRAP(sd, exp);
 }
 
