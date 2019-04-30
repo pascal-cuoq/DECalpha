@@ -2,7 +2,7 @@
 #include <inttypes.h>
 #include <stdio.h>
 
-typedef struct { uint64_t r;} da_v;
+typedef struct { uint64_t r;} da;
 
 typedef __uint128_t ulll;
   /* needed for access to 64x64->128 multiplication and 128/64->64 division
@@ -13,14 +13,14 @@ typedef __uint128_t ulll;
 #define DECADE_HI UINT64_C(40031996687737742)
 
 
-/* After subtracting DECADE_LO from the representation of a normal da_v,
+/* After subtracting DECADE_LO from the representation of a normal da,
    shift by EXP_SHIFT to obtain the biased exponent: */
 #define EXP_SHIFT 55
 #define SIGN_MASK UINT64_C(0x8000000000000000)
 #define SD_MASK ((UINT64_C(1)<<EXP_SHIFT)-1)
 
 #define WRAP(sd, exp) \
-  (da_v){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << EXP_SHIFT))}
+  (da){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << EXP_SHIFT))}
 
 /* The minimum unbiased exponent: */
 #define EXP_MIN (-140)
@@ -28,9 +28,9 @@ typedef __uint128_t ulll;
 /* The biased exponent of inf and NaN: */
 #define EXP_INFNAN 255
 
-static const da_v INFINITY = {UINT64_C(0x7f80000000000000)+DECADE_LO};
-static const da_v NAN = {UINT64_C(0x7f80000000000000)+DECADE_LO+1};
-static const da_v POS_ZERO = {0};
+static const da INFINITY = {UINT64_C(0x7f80000000000000)+DECADE_LO};
+static const da NAN = {UINT64_C(0x7f80000000000000)+DECADE_LO+1};
+static const da POS_ZERO = {0};
 
 static uint64_t powers[17]= {
   1,
@@ -53,7 +53,7 @@ static uint64_t powers[17]= {
 };
 
 // Prints a DEC alpha in somewhat human-readable form
-void da_print(da_v d) {
+void da_print(da d) {
   uint64_t n = d.r;
   uint64_t a = n & ~SIGN_MASK;
   if (a != n) printf("-");
@@ -79,7 +79,7 @@ void da_print(da_v d) {
 
 // Returns the closest DEC alpha representation of i * 10^(exp-140)
 /*@ requires 0 <= exp <= 0x7ffffff0; */
-da_v da_from_integer_and_biased_exp(uint64_t i, int exp) {
+da da_from_integer_and_biased_exp(uint64_t i, int exp) {
   if (i > DECADE_HI) {
     uint64_t factor, tenth;
     if (i > DECADE_HI * UINT64_C(10)) {
@@ -125,13 +125,17 @@ da_v da_from_integer_and_biased_exp(uint64_t i, int exp) {
   }
 }
 
+da da_from_integer(uint64_t i) {
+  return da_from_integer_and_biased_exp(i, 140);
+}
+
 // Returns the closest DEC alpha representation of i * 10^(exp-140)
 // When set, extra requires rounding up if the value is halfway
 /*@
   requires 0 <= exp <= 0x7ffffff0;
   requires i > DECADE_HI;
 */
-da_v da_from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
+da da_from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
   uint64_t factor, tenth, candidate, remainder;
   if (i > DECADE_HI * UINT64_C(10)) {
     factor = 100;
@@ -167,12 +171,12 @@ da_v da_from_large_integer_and_biased_exp(uint64_t i, int exp, _Bool extra) {
     return WRAP(candidate, exp);
 }
 
-/* add two positive normal, subnormal or zero da_vs */
+/* add two positive normal, subnormal or zero das */
 /*@
   requires 0 <= dx.r < INFINITY.r;
   requires 0 <= dy.r < INFINITY.r;
 */
-da_v da_add_pos_pos(da_v dx, da_v dy) {
+da da_add_pos_pos(da dx, da dy) {
   uint64_t l, s, lsd, ssd, x = dx.r, y = dy.r;
   int lexp, sexp;
   if (x > y) {
@@ -206,7 +210,7 @@ da_v da_add_pos_pos(da_v dx, da_v dy) {
     return da_from_integer_and_biased_exp(lsd + ssd, lexp);
   }
   if (lexp - sexp >= 17) {
-    return (da_v){l};
+    return (da){l};
   }
 
   lexp--;
@@ -219,14 +223,14 @@ da_v da_add_pos_pos(da_v dx, da_v dy) {
   return da_from_large_integer_and_biased_exp(lsd + d, lexp, extra);
 }
 
-/* subtract two positive normal, subnormal or zero da_vs,
+/* subtract two positive normal, subnormal or zero das,
    y being less than x. */
 /*@
   requires 0 <= dx.r < INFINITY.r;
   requires 0 <= dy.r < INFINITY.r;
   requires y <= x;
 */
-da_v da_sub_pos_pos(da_v dx, da_v dy) {
+da da_sub_pos_pos(da dx, da dy) {
   uint64_t x = dx.r, y = dy.r;
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
   uint64_t xsd;
@@ -251,7 +255,7 @@ da_v da_sub_pos_pos(da_v dx, da_v dy) {
     ysd = DECADE_LO + (yo & SD_MASK);
   }
   if (xexp - yexp >= 18) {
-    return (da_v){x};
+    return (da){x};
   }
   _Bool one_decade_above = (xexp == yexp + 1);
   if (one_decade_above) {
@@ -273,17 +277,17 @@ da_v da_sub_pos_pos(da_v dx, da_v dy) {
   return da_from_large_integer_and_biased_exp(xsd - d, xexp, extra);
 }
 
-da_v da_neg(da_v x) {
-  return (da_v){x.r ^ UINT64_C(0x8000000000000000)};
+da da_neg(da x) {
+  return (da){x.r ^ UINT64_C(0x8000000000000000)};
 }
 
-da_v da_add(da_v dx, da_v dy) {
+da da_add(da dx, da dy) {
   uint64_t x = dx.r, y = dy.r;
   uint64_t sx = x & SIGN_MASK, sy = y & SIGN_MASK;
   uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK;
   if (posx < INFINITY.r && posy < INFINITY.r) {
     if (sx == sy)
-      return (da_v){sx | da_add_pos_pos((da_v){posx}, (da_v){posy}).r};
+      return (da){sx | da_add_pos_pos((da){posx}, (da){posy}).r};
     // opposite signs, addition to be transformed into subtraction
     uint64_t greater, lower;
     uint64_t s;
@@ -297,7 +301,7 @@ da_v da_add(da_v dx, da_v dy) {
       greater = posy;
       lower = posx;
     }
-    return (da_v){s | (da_sub_pos_pos((da_v){greater}, (da_v){lower})).r};
+    return (da){s | (da_sub_pos_pos((da){greater}, (da){lower})).r};
   }
   if (posx > INFINITY.r || posy < INFINITY.r) return dx;
   if (posy > INFINITY.r || posx < INFINITY.r) return dy;
@@ -305,12 +309,12 @@ da_v da_add(da_v dx, da_v dy) {
   if (x != y) return NAN;
   return dy;
 }
-/* multiply two positive normal, subnormal or zero da_vs */
+/* multiply two positive normal, subnormal or zero das */
 /*@
   requires 0 <= dx.r < INFINITY.r;
   requires 0 <= dy.r < INFINITY.r;
 */
-da_v da_mult_pos_pos(da_v dx, da_v dy) {
+da da_mult_pos_pos(da dx, da dy) {
   uint64_t x = dx.r, y = dy.r;
   int64_t xo = (int64_t)x - (int64_t)DECADE_LO;
   uint64_t xsd;
@@ -356,7 +360,7 @@ da_v da_mult_pos_pos(da_v dx, da_v dy) {
     uint64_t half = p >> 1;
     if (rrem > half || rrem == half && (rem || (sd & 1)))
       rsd++;
-    return (da_v){rsd}; // exponent is 0
+    return (da){rsd}; // exponent is 0
   }
 
   if (sd >= DECADE_HI + 4 ||
@@ -373,15 +377,15 @@ da_v da_mult_pos_pos(da_v dx, da_v dy) {
   return WRAP(sd, exp);
 }
 
-/* multiply two da_vs */
-da_v da_mult(da_v dx, da_v dy) {
+/* multiply two das */
+da da_mult(da dx, da dy) {
   uint64_t x = dx.r, y = dy.r;
   uint64_t sx = x & SIGN_MASK, sy = y & SIGN_MASK;
   uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK;
   uint64_t s = sx ^ sy;
   uint64_t pos;
   if (posx < INFINITY.r && posy < INFINITY.r)
-    pos = da_mult_pos_pos((da_v){posx}, (da_v){posy}).r;
+    pos = da_mult_pos_pos((da){posx}, (da){posy}).r;
   else {
     if (posx > INFINITY.r) return dx;
     if (posy > INFINITY.r) return dy;
@@ -392,64 +396,64 @@ da_v da_mult(da_v dx, da_v dy) {
     // There remains only inf * finite
     pos = INFINITY.r;
   }
-  return (da_v){pos | s};
+  return (da){pos | s};
 }
 
 // TODO: make work for negative values and corner cases
-da_v da_pred(da_v x) {
-  return (da_v){x.r - 1};
+da da_pred(da x) {
+  return (da){x.r - 1};
 }
-da_v da_succ(da_v x) {
-  return (da_v){x.r + 1};
+da da_succ(da x) {
+  return (da){x.r + 1};
 }
 
 int main(void)
 {
-  da_print((da_v){0});puts("");
-  da_print((da_v){1});puts("");
-  da_print((da_v){2});puts("");
+  da_print((da){0});puts("");
+  da_print((da){1});puts("");
+  da_print((da){2});puts("");
   puts("...");
-  da_print((da_v){DECADE_LO-2});puts("");
-  da_print((da_v){DECADE_LO-1});puts("");
-  da_print((da_v){DECADE_LO});puts("");
-  da_print((da_v){DECADE_LO+1});puts("");
-  da_print((da_v){DECADE_LO+2});puts("");
+  da_print((da){DECADE_LO-2});puts("");
+  da_print((da){DECADE_LO-1});puts("");
+  da_print((da){DECADE_LO});puts("");
+  da_print((da){DECADE_LO+1});puts("");
+  da_print((da){DECADE_LO+2});puts("");
   puts("...");
-  da_print((da_v){DECADE_HI-2});puts("");
-  da_print((da_v){DECADE_HI-1});puts("");
-  da_print((da_v){DECADE_HI});puts("");
-  da_print((da_v){DECADE_HI+1});puts("");
-  da_print((da_v){DECADE_HI+2});puts("");
+  da_print((da){DECADE_HI-2});puts("");
+  da_print((da){DECADE_HI-1});puts("");
+  da_print((da){DECADE_HI});puts("");
+  da_print((da){DECADE_HI+1});puts("");
+  da_print((da){DECADE_HI+2});puts("");
   puts("...");
-  da_v one = da_from_integer_and_biased_exp(1,140);
+  da one = da_from_integer(1);
   da_print(da_pred(one));puts("");
   da_print(one);puts("");
   da_print(da_succ(one));puts("");
   puts("...");
-  da_v two = da_add_pos_pos(one, one);
+  da two = da_add(one, one);
   da_print(two);puts("");
   puts("...");
-  da_v three = da_add_pos_pos(two, one);
+  da three = da_add(two, one);
   da_print(three);puts(" (2+1)");
   puts("...");
-  da_v five = da_add_pos_pos(two, three);
+  da five = da_add(two, three);
   da_print(five);puts(" (2+3)");
   puts("...");
-  da_v eight = da_add_pos_pos(five, three);
+  da eight = da_add(five, three);
   da_print(eight);puts(" (5+3))");
   puts("...");
-  da_v eleven = da_add_pos_pos(eight, three);
+  da eleven = da_add(eight, three);
   da_print(eleven);puts(" (8+3)");
   puts("...");
-  da_print((da_v){0x4000000000000000});puts("\n...");
-  da_v DA_MAX=da_pred(INFINITY);
+  da_print((da){0x4000000000000000});puts("\n...");
+  da DA_MAX=da_pred(INFINITY);
   da_print(da_pred(DA_MAX));puts("");
   da_print(DA_MAX);puts(" DA_MAX");
   da_print(INFINITY);puts("");
   da_print(da_succ(INFINITY));puts("\n\nCountdown:");
-  da_v x = eleven;
+  da x = eleven;
   for (int i = 11; i>0; i--) {
-    x = da_sub_pos_pos(x, one);
+    x = i&1 ? da_sub_pos_pos(x, one) : da_add(x, da_neg(one));
     da_print(x);puts("");
   }
   puts("\nMultiplication:");
@@ -459,18 +463,18 @@ int main(void)
   da_print(x);puts(" (8*8)");
   x = da_mult(five, five);
   da_print(x);puts(" (5*5)");
-  da_v third = da_from_integer_and_biased_exp(333333333333333333,122);
+  da third = da_from_integer_and_biased_exp(333333333333333333,122);
   da_print(da_mult(third, three));puts(" (3*.333...)");
-  da_v ninth = da_mult(third, third);
+  da ninth = da_mult(third, third);
   da_print(ninth);puts(" (.333...*.333...)");
   da_print(da_mult(ninth, eleven));puts(" (11*.111...)");
   puts("\nMultiplication of subnormal operand:");
-  da_print(da_mult((da_v){1}, DA_MAX));puts(" (1E-140*DA_MAX)");
-  da_print(da_mult((da_v){9}, DA_MAX));puts(" (9E-140*DA_MAX)");
-  da_print(da_mult((da_v){987654321}, DA_MAX));
+  da_print(da_mult((da){1}, DA_MAX));puts(" (1E-140*DA_MAX)");
+  da_print(da_mult((da){9}, DA_MAX));puts(" (9E-140*DA_MAX)");
+  da_print(da_mult((da){987654321}, DA_MAX));
   puts(" (987654321E-140*DA_MAX)");
   puts("\nSubnormal result of multiplication:");
-  da_print(da_mult((da_v){1001}, da_from_integer_and_biased_exp(999,140)));
+  da_print(da_mult((da){1001}, da_from_integer(999)));
   puts(" (1001E-140*999)");
   da_print(da_mult(da_from_integer_and_biased_exp(99999,70),da_from_integer_and_biased_exp(10000001,70)));
   puts(" (99999E-70*10000001E-70)");
