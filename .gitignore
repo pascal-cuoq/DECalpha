@@ -57,3 +57,8 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# Build output
+demo
+test-fixed
+test-random
