@@ -89,15 +89,20 @@ int main(void)
   puts("\nSubnormal result of multiplication:");
   da_print(da_mult((da){1001}, da_from_integer(999)));
   puts(" (1001E-142*999)");
-  da_print(da_mult(da_from_integer_and_biased_exp(99999,72),da_from_integer_and_biased_exp(10000001,72)));
+  da_print(da_mult(da_from_integer_and_biased_exp(99999, 72),
+                   da_from_integer_and_biased_exp(10000001, 72)));
   puts(" (99999E-70*10000001E-70)");
-  da_print(da_mult(da_from_integer_and_biased_exp(1234567899999,72),da_from_integer_and_biased_exp(1001,72)));
+  da_print(da_mult(da_from_integer_and_biased_exp(1234567899999, 72),
+                   da_from_integer_and_biased_exp(1001, 72)));
   puts(" (1234567899999E-70*1001E-70)");
-  da_print(da_mult(da_from_integer_and_biased_exp(123456,71),da_from_integer_and_biased_exp(10000001,62)));
+  da_print(da_mult(da_from_integer_and_biased_exp(123456, 71),
+                   da_from_integer_and_biased_exp(10000001, 62)));
   puts(" (123456E-69*10000001E-60)");
-  da_print(da_mult(da_from_integer_and_biased_exp(523456,70),da_from_integer_and_biased_exp(10000001,61)));
+  da_print(da_mult(da_from_integer_and_biased_exp(523456, 70),
+                   da_from_integer_and_biased_exp(10000001, 61)));
   puts(" (523456E-68*10000001E-59)");
-  da_print(da_mult(da_from_integer_and_biased_exp(423456,70),da_neg(da_from_integer_and_biased_exp(10000001,61))));
+  da_print(da_mult(da_from_integer_and_biased_exp(423456, 70),
+                   da_neg(da_from_integer_and_biased_exp(10000001, 61))));
   puts(" (423456E-68*(-10000001E-59))");
   puts("\nDivision:");
   da_print(da_div(one, three));puts(" (1/3)");
@@ -151,17 +156,24 @@ int main(void)
   da_print(pi);puts(" (pi, rounded to DEC alpha)");
   da_print(da_quantize(pi, -2));puts(" (pi to hundredths)");
   da_print(da_quantize(pi, 0));puts(" (pi to units)");
-  da_print(da_quantize(strtoda("2.5", NULL), 0));puts(" (2.5 to units, tie to even)");
-  da_print(da_quantize(strtoda("3.5", NULL), 0));puts(" (3.5 to units, tie to even)");
-  da_print(da_quantize(strtoda("1.005", NULL), -2));puts(" (1.005 to hundredths, tie to even)");
-  da_print(da_quantize(strtoda("123456.789", NULL), 3));puts(" (123456.789 to thousands)");
+  da_print(da_quantize(strtoda("2.5", NULL), 0));
+  puts(" (2.5 to units, tie to even)");
+  da_print(da_quantize(strtoda("3.5", NULL), 0));
+  puts(" (3.5 to units, tie to even)");
+  da_print(da_quantize(strtoda("1.005", NULL), -2));
+  puts(" (1.005 to hundredths, tie to even)");
+  da_print(da_quantize(strtoda("123456.789", NULL), 3));
+  puts(" (123456.789 to thousands)");
   da_print(da_quantize(strtoda("-0.4", NULL), 0));puts(" (-0.4 to units)");
-  da_print(da_quantize(DA_MAX, -2));puts(" (DA_MAX to hundredths, unchanged)");
+  da_print(da_quantize(DA_MAX, -2));
+  puts(" (DA_MAX to hundredths, unchanged)");
   puts("\nFused multiply-add:");
   x = strtoda("1.0000000000000001", NULL);
   da_print(da_mult(x, x));puts(" (x*x for x = 1.0000000000000001)");
-  da_print(da_add(da_mult(x, x), da_neg(one)));puts(" (x*x-1 in two roundings)");
-  da_print(da_fma(x, x, da_neg(one)));puts(" (x*x-1 fused: the exact value)");
+  da_print(da_add(da_mult(x, x), da_neg(one)));
+  puts(" (x*x-1 in two roundings)");
+  da_print(da_fma(x, x, da_neg(one)));
+  puts(" (x*x-1 fused: the exact value)");
   da_print(da_fma(da_from_integer(20015998343868873), five, DA_ZERO));
   puts(" (20015998343868873*5+0, a tie, to even)");
   da_print(da_fma(da_from_integer(20015998343868873), five, (da){1}));
@@ -172,14 +184,18 @@ int main(void)
   printf("%d (compare(2, 1))\n", da_compare(two, one));
   printf("%d (compare(0, -0))\n", da_compare(DA_ZERO, da_neg(DA_ZERO)));
   printf("%d (compare(1, NaN), DA_UNORDERED)\n", da_compare(one, DA_NAN));
-  printf("%d (total_order(0, -0))\n", da_total_order(DA_ZERO, da_neg(DA_ZERO)));
-  printf("%d (total_order(inf, NaN))\n", da_total_order(DA_INFINITY, DA_NAN));
+  printf("%d (total_order(0, -0))\n",
+         da_total_order(DA_ZERO, da_neg(DA_ZERO)));
+  printf("%d (total_order(inf, NaN))\n",
+         da_total_order(DA_INFINITY, DA_NAN));
   printf("%d (total_order(-NaN, -inf))\n",
          da_total_order(da_neg(DA_NAN), da_neg(DA_INFINITY)));
   puts("\nSorting with total_order:");
-  da values[] = {three, da_neg(DA_ZERO), DA_NAN, da_neg(DA_INFINITY), DA_ZERO,
-                 (da){1}, da_neg(two), DA_MAX, da_neg(DA_NAN), DA_INFINITY};
-  qsort(values, sizeof values / sizeof *values, sizeof *values, by_total_order);
+  da values[] = {three, da_neg(DA_ZERO), DA_NAN, da_neg(DA_INFINITY),
+                 DA_ZERO, (da){1}, da_neg(two), DA_MAX, da_neg(DA_NAN),
+                 DA_INFINITY};
+  qsort(values, sizeof values / sizeof *values, sizeof *values,
+        by_total_order);
   for (unsigned i = 0; i < sizeof values / sizeof *values; i++) {
     da_print(values[i]);
     printf("%s", i + 1 < sizeof values / sizeof *values ? " < " : "\n");

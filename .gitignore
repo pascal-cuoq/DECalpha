@@ -62,3 +62,6 @@ dkms.conf
 demo
 test-fixed
 test-random
+
+# Claude Code project instructions, kept local
+CLAUDE.md

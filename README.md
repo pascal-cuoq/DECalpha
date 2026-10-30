@@ -12,7 +12,8 @@ any constants not chosen by humans (including the irrational values π
 or e, or the Avogadro constant until 2019-05-20), binary
 floating-point is more efficient. Decimal is only better in specific
 usecases such as monetary computations or computations involving the
-Avogadro constant after 2019-05-20 (https://en.wikipedia.org/wiki/Avogadro_constant ).
+Avogadro constant after 2019-05-20
+(https://en.wikipedia.org/wiki/Avogadro_constant ).
 
 DEC α represents numbers with 16 or 17 decimal digits of
 precision. Unlike in many other decimal floating-point formats, each
@@ -163,15 +164,19 @@ representations transformed by `r ^ (((int64_t)r >> 63) & INT64_MAX)`.
 
 ## The library
 
-The library is the file `dec-alpha.c`, with its interface in
-`dec-alpha.h`, and `demo.c` is a program that shows it off. The library
-needs a 128-bit unsigned integer type to get at the processor's
-64×64→128 multiplication and 128/64→64 division: C23's `unsigned
-_BitInt(128)` when the compiler provides it, which GCC 14 and Clang 16
-do in any language mode, and otherwise the `__uint128_t` extension of
-older GCC and Clang. `make` builds the demonstration with the project's
-warning flags and with `-fno-math-errno`, so that the binary
-floating-point square root used to seed `da_sqrt` is a single
+The library is the files `dec-alpha.c` and `da_printing.c`, with their
+interface in `dec-alpha.h`, and `demo.c` is a program that shows it off.
+`dec-alpha.c` holds the arithmetic, the comparisons and the conversions
+from and to strings, and depends on nothing beyond `ctype.h` and an
+inlined square root; `da_printing.c` holds everything that writes to a
+stream or allocates, so that programs that need neither can leave it
+out. The library needs a 128-bit unsigned integer type to get at the
+processor's 64×64→128 multiplication and 128/64→64 division: C23's
+`unsigned _BitInt(128)` when the compiler provides it, which GCC 14 and
+Clang 16 do in any language mode, and otherwise the `__uint128_t`
+extension of older GCC and Clang. `make` builds the demonstration with
+the project's warning flags and with `-fno-math-errno`, so that the
+binary floating-point square root used to seed `da_sqrt` is a single
 instruction and no math library is needed at link time. Without this
 flag, GCC keeps a fallback call for a negative argument that cannot
 occur and the program must be linked with `-lm`.
@@ -199,13 +204,32 @@ and declares the functions:
   IEEE 754 quiet predicate of that name, and `>` and `>=` are obtained by
   swapping the arguments), and `da_total_order`, the −1, 0 or 1 of the
   total order above, for sorting;
-* `da_print`, which prints a value exactly, in the style of C's `%g`
-  with 17 significant digits: positional notation such as `0.1` or `1000`
-  when the leading digit has a decimal exponent between −4 and 16, and
-  `d.dddE+dd` otherwise.
+* `da_to_string(char buf[DA_STRING_SIZE], da d)`, which writes the exact
+  value to `buf` in the style of C's `%g` with 17 significant digits:
+  positional notation such as `0.1` or `1000` when the leading digit has
+  a decimal exponent between −4 and 16, and `d.dddE+dd` otherwise. The
+  output is at most 24 characters, a sign, 17 digits, a point and a
+  three-digit exponent with its sign, so a buffer of `DA_STRING_SIZE`
+  bytes always suffices, and the length is returned. This string is
+  canonical: it is read back exactly by `strtoda`;
+* `da_print`, in `da_printing.c`, which writes `da_to_string` to the
+  standard output;
+* `da_snprintf(char *buf, size_t size, const char *fmt, da d)` and
+  `da_asprintf(char **strp, const char *fmt, da d)`, also in
+  `da_printing.c`, which format `d` as `snprintf` and `asprintf` would
+  with a single conversion. `fmt` is what stands between the `%` and the
+  conversion letter of a `printf` conversion specification, with the
+  letter included: `".2f"`, `"+12.5e"`, `"#G"`. The flags `-`, `+`,
+  space, `#` and `0`, the width and the precision have their usual
+  meanings, and the letter is one of `f`, `e`, `g` and their uppercase
+  forms; `*` is not accepted. Because the value is an exact decimal, the
+  output is what `printf` prints for a `double` of the same value when
+  such a `double` exists, and the only rounding is to the requested
+  precision, with ties to even: `".0f"` prints `2.5` as `2`. The return
+  value is the length of the complete output, or −1 when `fmt` is not
+  such a specification.
 
-There is no conversion to strings other than `da_print`, and no
-conversion from or to binary floating-point.
+There is no conversion from or to binary floating-point.
 
 ## Testing
 
@@ -213,7 +237,8 @@ conversion from or to binary floating-point.
 cases with expected results written by hand: the syntax and rounding of
 `strtoda` on long numerals, the signs of zero, the special values, ties
 inside a decade and at its ends, the overflow threshold, subnormals,
-NaN propagation, and the orderings. It needs nothing beyond the library.
+NaN propagation, the orderings, and the output of `da_snprintf` and
+`da_to_string`. It needs nothing beyond the library.
 `test-random.c` checks the library against an oracle built on GMP
 rationals, and requires GMP; `./test-random seed count` chooses the
 random seed and the number of iterations per section.

@@ -1,13 +1,12 @@
 #include <ctype.h>
-#include <inttypes.h>
-#include <stdio.h>
 #include <math.h>
 #include "dec-alpha.h"
 
 /* A 128-bit unsigned type is needed for access to the 64x64->128
-   multiplication and 128/64->64 division that the host processor hopefully
-   provides. Prefer the standard C23 type; fall back to the GCC/Clang extension
-   for compilers that provide the latter but not the former. */
+   multiplication and 128/64->64 division that the host processor
+   hopefully provides. Prefer the standard C23 type; fall back to the
+   GCC/Clang extension for compilers that provide the latter but not the
+   former. */
 #if defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= 128
 typedef unsigned _BitInt(128) ulll;
 #elif defined(__SIZEOF_INT128__)
@@ -34,7 +33,7 @@ typedef __uint128_t ulll;
 /* The biased exponent of inf and NaN: */
 #define EXP_INFNAN 255
 
-static const uint64_t powers[18]= {
+const uint64_t da_powers[18]= {
   1,
   10,
   1e2,
@@ -55,14 +54,29 @@ static const uint64_t powers[18]= {
   1e17,
 };
 
-/* Prints d in the style of C's %g with 17 significant digits: the exact
-   value, without trailing zeros, in positional notation when the leading
-   digit has a decimal exponent between -4 and 16, and as d.dddE+dd
-   otherwise. */
-void da_print(da d) {
-  uint64_t n = d.r;
-  uint64_t a = n & ~SIGN_MASK;
-  if (a != n) printf("-");
+static char *copy(char *p, const char *s, int n) {
+  for (int i = 0; i < n; i++) p[i] = s[i];
+  return p + n;
+}
+
+static char *fill(char *p, char c, int n) {
+  for (int i = 0; i < n; i++) p[i] = c;
+  return p + n;
+}
+
+/* Writes the exact value of d to buf in the style of C's %g with 17
+   significant digits: without trailing zeros, in positional notation when
+   the leading digit has a decimal exponent between -4 and 16, and as
+   d.dddE+dd otherwise. The longest output, a sign, 17 digits, a point and
+   a three-digit exponent with its sign, has DA_STRING_SIZE - 1 characters.
+   Returns the length. */
+int da_to_string(char buf[DA_STRING_SIZE], da d) {
+  char *p = buf;
+  uint64_t a = d.r & ~SIGN_MASK;
+  if (a != d.r) {
+    *p = '-';
+    p++;
+  }
   int64_t o = (int64_t)a - (int64_t)DECADE_LO;
   uint64_t sd;
   int k; // the value is sd * 10^k
@@ -74,38 +88,63 @@ void da_print(da d) {
     int e = o >> EXP_SHIFT;
     sd = DECADE_LO + (o & SD_MASK);
     if (e == EXP_INFNAN) {
-      printf(sd == DECADE_LO ? "inf" : "NaN");
-      return;
+      p = copy(p, sd == DECADE_LO ? "inf" : "NaN", 3);
+      *p = 0;
+      return (int)(p - buf);
     }
     k = EXP_MIN + e;
   }
   if (sd == 0) {
-    printf("0");
-    return;
+    p[0] = '0';
+    p[1] = 0;
+    return (int)(p + 1 - buf);
   }
   while (sd % 10 == 0) {
     sd /= 10;
     k++;
   }
-  char digits[21];
-  int len = snprintf(digits, sizeof digits, "%" PRIu64, sd);
+  char digits[17], *q = digits + 17;
+  for (uint64_t m = sd; m; m /= 10) {
+    q--;
+    *q = '0' + m % 10;
+  }
+  int len = (int)(digits + 17 - q);
   int x = len - 1 + k; // the decimal exponent of the leading digit
   if (k >= 0 && x < 17) { // an integer
-    printf("%s", digits);
-    while (k--) printf("0");
+    p = copy(p, q, len);
+    p = fill(p, '0', k);
   }
-  else if (k < 0 && x >= 0) // a fraction with an integer part
-    printf("%.*s.%s", x + 1, digits, digits + x + 1);
+  else if (k < 0 && x >= 0) { // a fraction with an integer part
+    p = copy(p, q, x + 1);
+    *p = '.';
+    p = copy(p + 1, q + x + 1, len - x - 1);
+  }
   else if (k < 0 && x >= -4) { // a fraction below 1
-    printf("0.");
-    while (++x < 0) printf("0");
-    printf("%s", digits);
+    p = copy(p, "0.", 2);
+    p = fill(p, '0', -x - 1);
+    p = copy(p, q, len);
   }
   else {
-    printf("%c", digits[0]);
-    if (len > 1) printf(".%s", digits + 1);
-    printf("E%+03d", x);
+    *p = *q;
+    p++;
+    if (len > 1) {
+      *p = '.';
+      p = copy(p + 1, q + 1, len - 1);
+    }
+    p[0] = 'E';
+    p[1] = x < 0 ? '-' : '+';
+    p += 2;
+    int ax = x < 0 ? -x : x;
+    if (ax >= 100) {
+      *p = '0' + ax / 100;
+      p++;
+    }
+    p[0] = '0' + ax / 10 % 10;
+    p[1] = '0' + ax % 10;
+    p += 2;
   }
+  *p = 0;
+  return (int)(p - buf);
 }
 
 typedef struct { uint64_t sd; int exp; } da_parts;
@@ -122,14 +161,16 @@ static da_parts da_split(uint64_t r) {
 /* Round (m / p) * 10^(exp-142) to the nearest da, ties to even. */
 /*@
   requires 0 <= exp;
-  requires DECADE_LO <= m / p < 10 * DECADE_LO || exp == 0 && m / p < DECADE_LO;
+  requires DECADE_LO <= m / p < 10 * DECADE_LO
+        || exp == 0 && m / p < DECADE_LO;
 */
 static da da_round(ulll m, ulll p, int exp) {
   uint64_t sd = m / p;
   ulll rem = m - (ulll)sd * p;
   if (sd >= DECADE_HI) {
-    // the only candidates are DECADE_HI and the DECADE_LO of the next decade,
-    // 8 units apart. On the exact midpoint, DECADE_HI is the even one.
+    // the only candidates are DECADE_HI and the DECADE_LO of the next
+    // decade, 8 units apart. On the exact midpoint, DECADE_HI is the even
+    // one.
     if (m > (ulll)(DECADE_HI + 4) * p) {
       exp++;
       sd = DECADE_LO;
@@ -152,7 +193,7 @@ static da da_round(ulll m, ulll p, int exp) {
 static da da_round_any_exp(ulll m, ulll p, int exp) {
   if (exp < 0) {
     if (exp < -16) return DA_ZERO;
-    p *= powers[-exp];
+    p *= da_powers[-exp];
     exp = 0;
   }
   return da_round(m, p, exp);
@@ -189,8 +230,9 @@ da da_from_integer_and_biased_exp(uint64_t i, int exp) {
   // also 0 in this case.
   if (i <= DECADE_HI) return WRAP(i, exp);
   // i has up to 20 digits, that is up to 3 more than fit in a decade
-  int j = (i >= DECADE_LO * 10) + (i >= DECADE_LO * 100) + (i >= DECADE_LO * 1000);
-  return da_round(i, powers[j], exp + j);
+  int j = (i >= DECADE_LO * 10) + (i >= DECADE_LO * 100)
+        + (i >= DECADE_LO * 1000);
+  return da_round(i, da_powers[j], exp + j);
 }
 
 da da_from_integer(uint64_t i) {
@@ -199,16 +241,21 @@ da da_from_integer(uint64_t i) {
 
 /* Does s start with word, ignoring case? word is lowercase. */
 static int prefix(const char *s, const char *word) {
-  for (; *word; s++, word++)
-    if (tolower((unsigned char)*s) != *word) return 0;
+  char c;
+  for (; c = *word; s++, word++)
+    if (tolower((unsigned char)*s) != c) return 0;
   return 1;
 }
 
 da strtoda(const char *nptr, char **endptr) {
   const char *s = nptr;
-  while (isspace((unsigned char)*s)) s++;
+  char c;
+  for (c = *s; isspace((unsigned char)c); c = *s) s++;
   uint64_t sign = 0;
-  if (*s == '+' || *s == '-') sign = *s++ == '-' ? SIGN_MASK : 0;
+  if (c == '+' || c == '-') {
+    sign = c == '-' ? SIGN_MASK : 0;
+    s++;
+  }
   if (prefix(s, "inf")) {
     s += 3;
     if (prefix(s, "inity")) s += 5;
@@ -219,23 +266,25 @@ da strtoda(const char *nptr, char **endptr) {
     s += 3;
     if (*s == '(') { // nan(n-char-sequence)
       const char *t = s + 1;
-      while (isalnum((unsigned char)*t) || *t == '_') t++;
-      if (*t == ')') s = t + 1;
+      for (c = *t; isalnum((unsigned char)c) || c == '_'; c = *t) t++;
+      if (c == ')') s = t + 1;
     }
     if (endptr) *endptr = (char *)s;
     return (da){DA_NAN.r | sign};
   }
   /* The significant digits go into m, 19 at most. A nonzero digit beyond
      these sets sticky, which is later appended as a twentieth digit 1: it
-     leaves the quotient by a power of ten unchanged and breaks ties upward,
-     which is all that a nonzero remainder below one unit can do. */
+     leaves the quotient by a power of ten unchanged and breaks ties
+     upward, which is all that a nonzero remainder below one unit can
+     do. */
   uint64_t m = 0;
   int sticky = 0, digits = 0, frac = 0, seen = 0;
   long scale = 0; // the value is m * 10^scale, plus sticky
   for (;; s++) {
-    int d = *s - '0';
+    c = *s;
+    int d = c - '0';
     if (d < 0 || d > 9) {
-      if (*s == '.' && !frac) { frac = 1; continue; }
+      if (c == '.' && !frac) { frac = 1; continue; }
       break;
     }
     seen = 1;
@@ -247,14 +296,18 @@ da strtoda(const char *nptr, char **endptr) {
     if (endptr) *endptr = (char *)nptr;
     return DA_ZERO;
   }
-  if (*s == 'e' || *s == 'E') {
+  if (c == 'e' || c == 'E') {
     const char *t = s + 1;
-    int eneg = 0;
-    if (*t == '+' || *t == '-') eneg = *t++ == '-';
-    if (isdigit((unsigned char)*t)) {
+    c = *t;
+    int eneg = c == '-';
+    if (c == '+' || c == '-') {
+      t++;
+      c = *t;
+    }
+    if (isdigit((unsigned char)c)) {
       long e = 0;
-      for (; isdigit((unsigned char)*t); t++)
-        if (e < 1000000000) e = 10 * e + (*t - '0');
+      for (; isdigit((unsigned char)c); t++, c = *t)
+        if (e < 1000000000) e = 10 * e + (c - '0');
       scale += eneg ? -e : e;
       s = t;
     }
@@ -270,8 +323,10 @@ da strtoda(const char *nptr, char **endptr) {
     m *= UINT64_C(10);
   }
   // m has at most 19 digits, up to 3 more than fit in a decade
-  int j = (m >= DECADE_LO * 10) + (m >= DECADE_LO * 100) + (m >= DECADE_LO * 1000);
-  da r = da_round_any_exp((ulll)m * 10 + sticky, powers[j + 1], exp + j);
+  int j = (m >= DECADE_LO * 10) + (m >= DECADE_LO * 100)
+        + (m >= DECADE_LO * 1000);
+  da r = da_round_any_exp((ulll)m * 10 + sticky, da_powers[j + 1],
+                          exp + j);
   return (da){r.r | sign};
 }
 
@@ -288,35 +343,38 @@ static da da_add_pos_pos(da dx, da dy) {
   }
   da_parts lp = da_split(l), sp = da_split(s);
   int d = lp.exp - sp.exp;
-  // s is then less than 0.41 units in the last place of l and cannot change it
+  // s is then less than 0.41 units in the last place of l and cannot
+  // change it
   if (d > 16) return (da){l};
   // the exact sum, in units of 10^(sp.exp-142)
-  ulll m = (ulll)lp.sd * powers[d] + sp.sd;
+  ulll m = (ulll)lp.sd * da_powers[d] + sp.sd;
   // m / 10^d may have overflowed the decade; if so, divide by one more 10
-  int j = d + (m >= (ulll)DECADE_LO * powers[d + 1]);
-  return da_round(m, powers[j], sp.exp + j);
+  int j = d + (m >= (ulll)DECADE_LO * da_powers[d + 1]);
+  return da_round(m, da_powers[j], sp.exp + j);
 }
 
-/* subtract two positive normal, subnormal or zero das, dy being at most dx */
+/* subtract two positive normal, subnormal or zero das, dy being at most
+   dx */
 /*@
   requires 0 <= dy.r <= dx.r < DA_INFINITY.r;
 */
 static da da_sub_pos_pos(da dx, da dy) {
   da_parts xp = da_split(dx.r), yp = da_split(dy.r);
   int d = xp.exp - yp.exp;
-  // y is then less than 0.05 units in the last place of x and cannot change
-  // it. (The value below DECADE_LO is 0.8 unit away, so 0.4 would do, but
-  // 17 decades below x, y can still weigh 0.4003.)
+  // y is then less than 0.05 units in the last place of x and cannot
+  // change it. (The value below DECADE_LO is 0.8 unit away, so 0.4 would
+  // do, but 17 decades below x, y can still weigh 0.4003.)
   if (d > 17) return dx;
   // the exact difference fits in 64 bits, and may need normalizing after
   // cancellation
   if (d <= 1)
-    return da_from_integer_and_biased_exp(xp.sd * powers[d] - yp.sd, yp.exp);
+    return da_from_integer_and_biased_exp(xp.sd * da_powers[d] - yp.sd,
+                                          yp.exp);
   // no cancellation: the exact difference, in units of 10^(yp.exp-142),
   // is in x's decade or the one below
-  ulll m = (ulll)xp.sd * powers[d] - yp.sd;
-  int j = d - (m < (ulll)DECADE_LO * powers[d]);
-  return da_round(m, powers[j], yp.exp + j);
+  ulll m = (ulll)xp.sd * da_powers[d] - yp.sd;
+  int j = d - (m < (ulll)DECADE_LO * da_powers[d]);
+  return da_round(m, da_powers[j], yp.exp + j);
 }
 
 da da_neg(da x) {
@@ -330,9 +388,9 @@ da da_add(da dx, da dy) {
   if (posx < DA_INFINITY.r && posy < DA_INFINITY.r) {
     if (sx == sy)
       return (da){sx | da_add_pos_pos((da){posx}, (da){posy}).r};
-    // opposite signs, addition to be transformed into subtraction. The result
-    // takes the sign of the operand of greater magnitude, and is +0 when the
-    // magnitudes are equal.
+    // opposite signs, addition to be transformed into subtraction. The
+    // result takes the sign of the operand of greater magnitude, and is +0
+    // when the magnitudes are equal.
     if (posx == posy) return DA_ZERO;
     uint64_t s = sx, greater = posx, lower = posy;
     if (posx < posy) {
@@ -379,8 +437,8 @@ da da_mult(da dx, da dy) {
   else {
     if (posx > DA_INFINITY.r) return dx;
     if (posy > DA_INFINITY.r) return dy;
-    /* There remains only the cases where one argument is inf and the other is
-       not Nan. */
+    /* There remains only the cases where one argument is inf and the
+       other is not Nan. */
     if (posx == 0 || posy == 0)
        return DA_NAN;
     // There remains only inf * finite
@@ -402,9 +460,10 @@ static da da_div_pos_pos(da dx, da dy) {
     yp.sd *= UINT64_C(10);
     yp.exp--;
   }
-  // the exact quotient is (m / yp.sd) * 10^(exp-142). m / yp.sd starts below
-  // 1e16 < 10 * DECADE_LO, and is scaled up until it reaches DECADE_LO: at
-  // most twice when x is normal, as its significand then exceeds yp.sd / 10
+  // the exact quotient is (m / yp.sd) * 10^(exp-142). m / yp.sd starts
+  // below 1e16 < 10 * DECADE_LO, and is scaled up until it reaches
+  // DECADE_LO: at most twice when x is normal, as its significand then
+  // exceeds yp.sd / 10
   int exp = xp.exp - yp.exp + 127;
   ulll m = (ulll)xp.sd * (ulll)1e15, t = (ulll)DECADE_LO * yp.sd;
   while (m < t) {
@@ -428,8 +487,8 @@ da da_div(da dx, da dy) {
     if (posy > DA_INFINITY.r) return dy;
     /* There remains only the cases where an argument is zero or inf. The
        result is then inf, zero or NaN according to the comparison of the
-       magnitudes: inf/finite, finite/inf, nonzero/0, 0/nonzero, and inf/inf
-       and 0/0. */
+       magnitudes: inf/finite, finite/inf, nonzero/0, 0/nonzero, and
+       inf/inf and 0/0. */
     if (posx == posy) return DA_NAN;
     pos = posx > posy ? DA_INFINITY.r : 0;
   }
@@ -440,33 +499,35 @@ da da_div(da dx, da dy) {
 /*@ requires 0 < dx.r < DA_INFINITY.r; */
 static da da_sqrt_pos(da dx) {
   da_parts xp = da_split(dx.r);
-  // sqrt(sd * 10^(exp-142)) is sqrt(sd * 10^j) * 10^((exp-j)/2 - 71) for j of
-  // the parity of exp. j is chosen so that the root has 16 or 17 digits:
-  // 16 always works for an even exp, 15 or 17 for an odd one. The root is
-  // below DECADE_LO exactly when M is below its square.
+  // sqrt(sd * 10^(exp-142)) is sqrt(sd * 10^j) * 10^((exp-j)/2 - 71) for
+  // j of the parity of exp. j is chosen so that the root has 16 or 17
+  // digits: 16 always works for an even exp, 15 or 17 for an odd one. The
+  // root is below DECADE_LO exactly when M is below its square.
   int j = 16 - (xp.exp & 1);
-  ulll M = (ulll)xp.sd * powers[j];
-  while (M < (ulll)DECADE_LO * DECADE_LO) { // at most once when x is normal
+  ulll M = (ulll)xp.sd * da_powers[j];
+  // at most once when x is normal
+  while (M < (ulll)DECADE_LO * DECADE_LO) {
     M *= (ulll)100;
     j += 2;
   }
   int exp = (xp.exp - j) / 2 + 71;
-  // the binary floating-point root is within a dozen units of sqrt(M), from
-  // where one Newton step lands on floor(sqrt(M)), or one above it when M is
-  // within a few hundred of the next perfect square
+  // the binary floating-point root is within a dozen units of sqrt(M),
+  // from where one Newton step lands on floor(sqrt(M)), or one above it
+  // when M is within a few hundred of the next perfect square
   uint64_t r = sqrt((double)M);
   r = (r + (uint64_t)(M / r)) / 2;
   // the nearest integer n to sqrt(M) is such that n(n-1) < M <= n(n+1). It
   // is never a tie, as that would require M = n^2 + n + 1/4. r is never
-  // above n: it exceeds floor(sqrt(M)) only when sqrt(M) is within 1e-13 of
-  // the integer above, which is then the nearest one.
+  // above n: it exceeds floor(sqrt(M)) only when sqrt(M) is within 1e-13
+  // of the integer above, which is then the nearest one.
   ulll sq = (ulll)r * r;
   r += M > sq + r;
   // above DECADE_HI, the candidates are DECADE_HI and the DECADE_LO of the
   // next decade, whose representation is the next one, and the midpoint is
   // DECADE_HI + 4. sqrt(M) is above it only if r was above DECADE_HI.
   if (r > DECADE_HI) r = DECADE_HI;
-  return (da){WRAP(r, exp).r + (M > (ulll)(DECADE_HI + 4) * (DECADE_HI + 4))};
+  return (da){WRAP(r, exp).r
+              + (M > (ulll)(DECADE_HI + 4) * (DECADE_HI + 4))};
 }
 
 /* square root of a da */
@@ -474,8 +535,8 @@ da da_sqrt(da dx) {
   uint64_t x = dx.r;
   if (0 < x && x < DA_INFINITY.r) return da_sqrt_pos(dx);
   uint64_t posx = x & ~SIGN_MASK;
-  /* +0, +inf, -0 and NaN are returned unchanged. There remains the negative
-     numbers, including -inf. */
+  /* +0, +inf, -0 and NaN are returned unchanged. There remains the
+     negative numbers, including -inf. */
   if (x <= DA_INFINITY.r || posx == 0 || posx > DA_INFINITY.r) return dx;
   return DA_NAN;
 }
@@ -487,8 +548,9 @@ da da_quantize(da dx, int e) {
   // the number of low digits of the significand that 10^e does not resolve
   int64_t d = (int64_t)e + 142 - xp.exp;
   if (d <= 0) return dx; // x is a multiple of 10^e already
-  if (d > 16) return (da){s}; // the significand, below 5e16, is below 10^e / 2
-  uint64_t p = powers[d], n = xp.sd / p, rem = xp.sd - n * p;
+  // the significand, below 5e16, is then below 10^e / 2
+  if (d > 16) return (da){s};
+  uint64_t p = da_powers[d], n = xp.sd / p, rem = xp.sd - n * p;
   n += 2 * rem > p || 2 * rem == p && (n & 1);
   if (n == 0) return (da){s};
   return (da){s | da_round_wide(n, e + 142).r};
@@ -498,16 +560,18 @@ da da_quantize(da dx, int e) {
 
 da da_fma(da dx, da dy, da dz) {
   uint64_t x = dx.r, y = dy.r, z = dz.r;
-  uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK, posz = z & ~SIGN_MASK;
+  uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK,
+    posz = z & ~SIGN_MASK;
   // with an infinite or NaN operand, neither operation rounds
-  if (posx >= DA_INFINITY.r || posy >= DA_INFINITY.r || posz >= DA_INFINITY.r)
+  if (posx >= DA_INFINITY.r || posy >= DA_INFINITY.r
+      || posz >= DA_INFINITY.r)
     return da_add(da_mult(dx, dy), dz);
   da_parts xp = da_split(posx), yp = da_split(posy), zp = da_split(posz);
   /* The product a * 10^ea, exact in 128 bits, and the addend b * 10^eb.
-     The one with the coarser unit becomes a: it is scaled to the unit of the
-     other as long as it fits, after which either the units are equal and
-     the sum is exact, or a is so large that the part of b below its unit
-     can only decide ties, and is folded into a tenth of a unit. */
+     The one with the coarser unit becomes a: it is scaled to the unit of
+     the other as long as it fits, after which either the units are equal
+     and the sum is exact, or a is so large that the part of b below its
+     unit can only decide ties, and is folded into a tenth of a unit. */
   ulll a = (ulll)xp.sd * yp.sd, b = zp.sd;
   int ea = xp.exp + yp.exp - 284, eb = zp.exp - 142;
   uint64_t sa = (x ^ y) & SIGN_MASK, sb = z & SIGN_MASK;
@@ -528,7 +592,8 @@ da da_fma(da dx, da dy, da dz) {
     else { m = b - a; s = sb; }
   }
   else {
-    // q is 10^(ea-eb), or any larger power of ten when b is below it anyway
+    // q is 10^(ea-eb), or any larger power of ten when b is below it
+    // anyway
     ulll q = 1;
     for (int d = ea - eb; d > 0 && q <= b; d--) q *= 10;
     ulll bq = b / q, sticky = b % q != 0;
@@ -541,7 +606,7 @@ da da_fma(da dx, da dy, da dz) {
 
 da da_succ(da dx) {
   uint64_t x = dx.r;
-  // +0 and positive finite values, the next one being one representation up
+  // +0 and positive finite values, the next being one representation up
   if (x < DA_INFINITY.r) return (da){x + 1};
   // -0, followed like +0 by the smallest subnormal
   if (x == SIGN_MASK) return (da){1};
