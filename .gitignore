@@ -61,7 +61,9 @@ dkms.conf
 # Build output
 demo
 test-fixed
+test-fixed-inexact
 test-random
+test-random-inexact
 
 # Claude Code project instructions, kept local
 CLAUDE.md

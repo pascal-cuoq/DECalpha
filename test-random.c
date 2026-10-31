@@ -4,10 +4,13 @@
    definition alone, without any arithmetic of its own. Operands are drawn
    at random, uniformly or constructed around the hard cases: ties, decade
    boundaries, cancellation, subnormals, overflow. The printing functions
-   are compared with glibc's printf instead. The fixed tests, with expected
-   results written by hand, are in test-fixed.c.
+   are compared with glibc's printf instead. The inexact flag is compared
+   with the oracle's when the library was built with it, and checked to
+   stay clear otherwise. The fixed tests, with expected results written by
+   hand, are in test-fixed.c.
 
    Build: cc -std=c11 -O2 test-random.c dec-alpha.o da_printing.o -lgmp
+          with either build of the library
    Usage: ./test-random [seed] [count]         (defaults: 1 and 2000) */
 
 #include <gmp.h>
@@ -85,12 +88,17 @@ static void q_of(mpq_t q, uint64_t r) {
 }
 
 static long ties; /* exact midpoints met by nearest() */
+/* the oracle's inexact flag, raised by nearest() as the library raises
+   da_inexact, and compared with it by check() after a rounding
+   operation */
+static int o_inexact;
 
-/* Is key(r) <= s, where key(r) is z(r), or z(r)^2 in square mode? */
-static int key_le(uint64_t r, const mpq_t s, int square, mpz_t z) {
+/* The sign of s - key(r), where key(r) is z(r), or z(r)^2 in square
+   mode. */
+static int key_cmp(uint64_t r, const mpq_t s, int square, mpz_t z) {
   z_of(z, r);
   if (square) mpz_mul(z, z, z);
-  return mpq_cmp_z(s, z) >= 0;
+  return mpq_cmp_z(s, z);
 }
 
 /* The oracle: the representation of the non-negative value nearest to q,
@@ -109,17 +117,20 @@ static uint64_t nearest(const mpq_t q, int square) {
   mpq_set_z(s, pow10z[square ? 2 * BIAS : BIAS]);
   mpq_mul(s, s, q);
   uint64_t lo = 0, hi = INF, res;
-  if (key_le(INF, s, square, z))
+  if (key_cmp(INF, s, square, z) >= 0) {
     res = INF;
+    o_inexact = 1;
+  }
   else {
     while (hi - lo > 1) {
       uint64_t mid = lo + (hi - lo) / 2;
-      if (key_le(mid, s, square, z)) lo = mid; else hi = mid;
+      if (key_cmp(mid, s, square, z) >= 0) lo = mid; else hi = mid;
     }
-    /* key(lo) <= s < key(hi). Compare with the midpoint
-       m = (v(lo)+v(hi))/2: 2s against z(lo)+z(hi), or in square mode 4s
-       against (z(lo)+z(hi))^2, which is four times the square of the
-       midpoint. */
+    /* key(lo) <= s < key(hi): the result is exact, and lo, when key(lo)
+       is s. Otherwise compare with the midpoint m = (v(lo)+v(hi))/2: 2s
+       against z(lo)+z(hi), or in square mode 4s against (z(lo)+z(hi))^2,
+       which is four times the square of the midpoint. */
+    o_inexact |= key_cmp(lo, s, square, z) != 0;
     z_of(z, lo);
     z_of(zm, hi);
     mpz_add(zm, zm, z);
@@ -227,11 +238,12 @@ static da o_sqrt(da dx) {
   return d;
 }
 
-/* x * y + z from the exact rational, with the sign rules of addition */
+/* x * y + z from the exact rational, with the sign rules of addition. A
+   special z alone is the result, the product not rounding. */
 static da o_fma(da dx, da dy, da dz) {
   uint64_t x = dx.r, y = dy.r, z = dz.r;
-  if (mag(x) >= INF || mag(y) >= INF || mag(z) >= INF)
-    return o_add(o_mult(dx, dy), dz);
+  if (mag(x) >= INF || mag(y) >= INF) return o_add(o_mult(dx, dy), dz);
+  if (mag(z) >= INF) return dz;
   mpq_t q, t;
   mpq_inits(q, t, NULL);
   q_of(q, mag(x));
@@ -254,7 +266,10 @@ static da o_quantize(da dx, int e) {
   if (mag(x) >= INF) return dx;
   /* beyond these, every value is a multiple of 10^e, or below 10^e / 2 */
   if (e < -300) return dx;
-  if (e > 300) return (da){x & SIGN};
+  if (e > 300) {
+    o_inexact |= mag(x) != 0;
+    return (da){x & SIGN};
+  }
   mpq_t q;
   mpz_t n, r;
   mpq_init(q);
@@ -264,6 +279,7 @@ static da o_quantize(da dx, int e) {
   else mpz_mul(mpq_numref(q), mpq_numref(q), pow10z[-e]);
   mpq_canonicalize(q); // q is now |x| / 10^e
   mpz_fdiv_qr(n, r, mpq_numref(q), mpq_denref(q));
+  o_inexact |= mpz_sgn(r) != 0;
   mpz_mul_2exp(r, r, 1);
   int c = mpz_cmp(r, mpq_denref(q));
   if (c == 0) ties++;
@@ -278,6 +294,11 @@ static da o_quantize(da dx, int e) {
 /* ---- reporting ---- */
 
 static long checks, failures;
+/* whether dec-alpha.c and da_printing.c were built with the inexact flag:
+   main probes the library. If so, the flag must be raised exactly when the
+   oracle raises its own, and otherwise it must never be touched. */
+static int inexact_arith, inexact_printf;
+static int flagged; /* set by ROUNDING for check() to compare the flags */
 
 static void show(const char *what, da d) {
   printf("  %4s = 0x%016" PRIx64 " = ", what, d.r);
@@ -287,13 +308,17 @@ static void show(const char *what, da d) {
 
 static void check(const char *op, da x, const da *y, da got, da want) {
   checks++;
-  if (got.r == want.r) return;
+  int want_flag = inexact_arith && o_inexact;
+  int flag_ok = !flagged || da_inexact == want_flag;
+  if (got.r == want.r && flag_ok) return;
   failures++;
   printf("FAIL %s\n", op);
   show("x", x);
   if (y) show("y", *y);
   show("got", got);
   show("want", want);
+  if (!flag_ok)
+    printf("  inexact flag %d, want %d\n", da_inexact, want_flag);
   if (failures >= 50) {
     puts("too many failures, stopping");
     exit(1);
@@ -313,6 +338,12 @@ static void check3(const char *op, da x, da y, da z, da got, da want) {
   check(op, x, &y, got, want);
   if (failures > f) show("z", z);
 }
+
+/* The check of an operation that rounds: both inexact flags are cleared
+   before the library and the oracle run, in whichever order the
+   arguments are evaluated, and check() compares them. */
+#define ROUNDING(check_call) \
+  (da_inexact = o_inexact = 0, flagged = 1, check_call, flagged = 0)
 
 /* ---- random inputs ---- */
 
@@ -432,10 +463,12 @@ static void test_from_integer(long n) {
     default: v = sd_edge() * mpz_get_ui(pow10z[below(4)]); break;
     }
     int e = i % 3 == 0 ? exp_rand() : between(0, 2) * 127;
-    check2("from_integer_and_biased_exp", (da){v}, (da){(uint64_t)e},
-           da_from_integer_and_biased_exp(v, e), mk(v, e));
+    ROUNDING(check2("from_integer_and_biased_exp", (da){v},
+                    (da){(uint64_t)e},
+                    da_from_integer_and_biased_exp(v, e), mk(v, e)));
     if (i % 4 == 0)
-      check1("from_integer", (da){v}, da_from_integer(v), mk(v, BIAS));
+      ROUNDING(check1("from_integer", (da){v}, da_from_integer(v),
+                      mk(v, BIAS)));
   }
 }
 
@@ -473,8 +506,8 @@ static void test_add(long n) {
       break;
     default: x = special_rand(); y = da_rand(); break;
     }
-    check2("add", x, y, da_add(x, y), o_add(x, y));
-    check2("add", y, x, da_add(y, x), o_add(y, x));
+    ROUNDING(check2("add", x, y, da_add(x, y), o_add(x, y)));
+    ROUNDING(check2("add", y, x, da_add(y, x), o_add(y, x)));
   }
 }
 
@@ -511,8 +544,8 @@ static void test_mult(long n) {
       break;
     default: x = special_rand(); y = da_rand(); break;
     }
-    check2("mult", x, y, da_mult(x, y), o_mult(x, y));
-    check2("mult", y, x, da_mult(y, x), o_mult(y, x));
+    ROUNDING(check2("mult", x, y, da_mult(x, y), o_mult(x, y)));
+    ROUNDING(check2("mult", y, x, da_mult(y, x), o_mult(y, x)));
   }
 }
 
@@ -553,8 +586,8 @@ static void test_div(long n) {
       break;
     default: x = special_rand(); y = da_rand(); break;
     }
-    check2("div", x, y, da_div(x, y), o_div(x, y));
-    check2("div", y, x, da_div(y, x), o_div(y, x));
+    ROUNDING(check2("div", x, y, da_div(x, y), o_div(x, y)));
+    ROUNDING(check2("div", y, x, da_div(y, x), o_div(y, x)));
   }
 }
 
@@ -588,7 +621,7 @@ static void test_sqrt(long n) {
       break;
     default: x = coin() ? special_rand() : signed_da(mag_rand(), 1); break;
     }
-    check1("sqrt", x, da_sqrt(x), o_sqrt(x));
+    ROUNDING(check1("sqrt", x, da_sqrt(x), o_sqrt(x)));
   }
   mpz_clear(z);
   mpq_clear(q);
@@ -714,13 +747,16 @@ static void test_strtoda(long n) {
   for (long i = 0; i < n; i++) {
     random_numeral(buf);
     char *end;
+    da_inexact = o_inexact = 0;
     da got = strtoda(buf, &end);
     da want = o_strtoda(buf);
-    if (got.r != want.r || *end) {
+    int want_flag = inexact_arith && o_inexact;
+    if (got.r != want.r || *end || da_inexact != want_flag) {
       failures++;
       printf("FAIL strtoda \"%s\"\n", buf);
       show("got", got);
       show("want", want);
+      printf("  inexact flag %d, want %d\n", da_inexact, want_flag);
     }
     checks++;
   }
@@ -815,8 +851,8 @@ static void test_fma(long n) {
       if (coin()) { da t = x; x = z; z = t; }
       break;
     }
-    check3("fma", x, y, z, da_fma(x, y, z), o_fma(x, y, z));
-    check3("fma", y, x, z, da_fma(y, x, z), o_fma(y, x, z));
+    ROUNDING(check3("fma", x, y, z, da_fma(x, y, z), o_fma(x, y, z)));
+    ROUNDING(check3("fma", y, x, z, da_fma(y, x, z), o_fma(y, x, z)));
   }
 }
 
@@ -842,19 +878,21 @@ static void test_quantize(long n) {
       break;
     default: e = coin() ? 2147483647 : -2147483647 - 1; break;
     }
-    check2("quantize", x, (da){(uint64_t)(int64_t)e}, da_quantize(x, e),
-           o_quantize(x, e));
+    ROUNDING(check2("quantize", x, (da){(uint64_t)(int64_t)e},
+                    da_quantize(x, e), o_quantize(x, e)));
   }
 }
 
 /* ---- main ---- */
 
 /* da_to_string fits its bound, reports its length, is read back exactly by
-   strtoda, and agrees with da_snprintf's .17G on finite values. */
+   strtoda, and agrees with da_snprintf's .17G on finite values. None of
+   this raises the inexact flag. */
 static void test_to_string(long n) {
   for (long i = 0; i < n; i++) {
     da x = da_rand();
     char s[DA_STRING_SIZE], t[DA_STRING_SIZE];
+    da_inexact = 0;
     int len = da_to_string(s, x);
     char *end;
     da back = strtoda(s, &end);
@@ -862,7 +900,7 @@ static void test_to_string(long n) {
     uint64_t want = nan ? NAN_R | (x.r & SIGN) : x.r;
     checks++;
     if (len != (int)strlen(s) || len >= DA_STRING_SIZE || *end
-        || back.r != want) {
+        || back.r != want || da_inexact) {
       failures++;
       printf("FAIL to_string of 0x%016" PRIx64 ": \"%s\", length %d\n",
              x.r, s, len);
@@ -870,7 +908,7 @@ static void test_to_string(long n) {
     if ((x.r & ~SIGN) >= INF) continue;
     da_snprintf(t, sizeof t, ".17G", x);
     checks++;
-    if (strcmp(s, t)) {
+    if (strcmp(s, t) || da_inexact) {
       failures++;
       printf("FAIL to_string \"%s\" differs from .17G \"%s\"\n", s, t);
     }
@@ -882,7 +920,8 @@ static void test_to_string(long n) {
    and as DEC α values: m * 2^e with m below 2^53 and the integer m * 2^e,
    or m * 5^-e when e is negative, at most 2^55. Zeros, infinities and NaNs
    too. The specifications are random, and so is the size of a truncated
-   output, which must leave the rest of the buffer alone. */
+   output, which must leave the rest of the buffer alone. The inexact flag
+   is expected exactly when the output does not read back as the value. */
 static void test_snprintf(long n) {
   mpq_t q, qd;
   mpq_inits(q, qd, NULL);
@@ -932,21 +971,29 @@ static void test_snprintf(long n) {
     char fmt[48], want[512], got[512], wt[512], gt[512], *s = NULL;
     snprintf(fmt, sizeof fmt, "%%%s", spec);
     int wn = snprintf(want, sizeof want, fmt, v);
+    da_inexact = 0;
     int gn = da_snprintf(got, sizeof got, spec, x);
+    int flag = da_inexact;
+    da_inexact = 0;
     int an = da_asprintf(&s, spec, x);
+    int aflag = da_inexact;
     size_t size = below((uint64_t)wn + 4);
     memset(wt, 'X', sizeof wt);
     memset(gt, 'X', sizeof gt);
     snprintf(wt, size, fmt, v);
     int tn = da_snprintf(gt, size, spec, x);
+    int want_flag = inexact_printf && strtoda(want, NULL).r != x.r;
     checks++;
     if (gn != wn || strcmp(got, want) || an != wn || strcmp(s, want)
-        || tn != wn || memcmp(wt, gt, sizeof wt)) {
+        || tn != wn || memcmp(wt, gt, sizeof wt)
+        || flag != want_flag || aflag != want_flag) {
       failures++;
       printf("FAIL snprintf \"%s\" of 0x%016" PRIx64 ": want %d \"%s\", "
              "got %d \"%s\", asprintf %d \"%s\", size %zu %d \"%.*s\"\n",
              spec, x.r, wn, want, gn, got, an, an < 0 ? "" : s, size, tn,
              (int)(size ? size - 1 : 0), gt);
+      printf("  inexact flag %d and %d, want %d\n", flag, aflag,
+             want_flag);
     }
     free(s);
   }
@@ -971,6 +1018,17 @@ int main(int argc, char **argv) {
     mpz_init(pow10z[i]);
     mpz_mul_ui(pow10z[i], pow10z[i - 1], 10);
   }
+  /* a probe of each file: 1 / 3 and 0.5 printed with no decimals */
+  da_inexact = 0;
+  da_div(da_from_integer(1), da_from_integer(3));
+  inexact_arith = da_inexact;
+  char half[4];
+  da_inexact = 0;
+  da_snprintf(half, sizeof half, ".0f",
+              da_from_integer_and_biased_exp(5, BIAS - 1));
+  inexact_printf = da_inexact;
+  printf("inexact flag %s in dec-alpha.c, %s in da_printing.c\n",
+         inexact_arith ? "on" : "off", inexact_printf ? "on" : "off");
   section("roundtrip", test_roundtrip, n);
   section("from_integer", test_from_integer, n);
   section("add", test_add, n);

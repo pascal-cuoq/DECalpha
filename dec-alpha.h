@@ -93,4 +93,15 @@ int da_compare(da x, da y);
    being ordered by their representation. Suitable for sorting. */
 int da_total_order(da x, da y);
 
+/* IEEE 754's inexact flag, sticky and per thread: the library raises it
+   when a result differs from the exact one, the infinities of overflow
+   and the zeros of underflow included, and never clears it; a program
+   that cares clears it before a computation and reads it after. Raising
+   it is a compile-time option of each file: dec-alpha.c compiled with
+   DA_INEXACT defined raises it in the operations and the conversions,
+   and da_printing.c compiled with DA_INEXACT_PRINTF defined raises it
+   when the precision of da_snprintf and da_asprintf drops nonzero
+   digits. Otherwise the library never touches it. */
+extern _Thread_local int da_inexact;
+
 #endif

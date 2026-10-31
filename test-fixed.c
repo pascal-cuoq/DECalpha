@@ -3,6 +3,9 @@
    neither a seed nor GMP; the random tests are in test-random.c.
 
    Build: cc -std=c11 test-fixed.c dec-alpha.o da_printing.o
+          with either build of the library: the inexact flag is checked
+          when the library was built with it, and checked to stay clear
+          otherwise
    Usage: ./test-fixed [print | strings]       (see print_strings) */
 
 #include <errno.h>
@@ -533,6 +536,106 @@ static void test_to_string(void) {
 
 /* With an argument, the lines that make check compares with cmp: the value
    of each of the strings above by da_print, or the text it should be. */
+/* ---- the inexact flag: raised on every rounded result and on no other
+   when the library was built with DA_INEXACT, in dec-alpha.c, and
+   DA_INEXACT_PRINTF, in da_printing.c, and never touched otherwise. A
+   probe of each file tells which build this is. ---- */
+
+static const struct {
+  const char *op, *x, *y, *z; int inexact;
+} flagged[] = {
+  {"/", "1", "3", NULL, 1}, {"/", "1", "10", NULL, 0},
+  {"/", "inf", "3", NULL, 0}, {"/", "1", "0", NULL, 0},
+  {"/", "1e-142", "10", NULL, 1},
+  {"+", "1", "3", NULL, 0}, {"+", "nan", "3", NULL, 0},
+  {"+", "1", "1e-17", NULL, 1}, {"+", "1", "-1e-18", NULL, 1},
+  {"+", "1e128", "0", NULL, 0}, {"+", "1e128", "-1", NULL, 1},
+  {"+", "40031996687737742e112", "5e112", NULL, 1},
+  {"*", "1e128", "1e128", NULL, 1}, {"*", "1e-142", "1e-142", NULL, 1},
+  {"*", "1e-142", "1", NULL, 0}, {"*", "1e-142", "0.1", NULL, 1},
+  {"*", "20015998343868871", "2", NULL, 0},
+  {"*", "20015998343868873", "2", NULL, 1},
+  {"*", "7", "1.1111111111111111", NULL, 1},
+  {"sqrt", "4", NULL, NULL, 0}, {"sqrt", "2", NULL, NULL, 1},
+  {"sqrt", "0.04", NULL, NULL, 0}, {"sqrt", "0.4", NULL, NULL, 1},
+  {"sqrt", "-1", NULL, NULL, 0}, {"sqrt", "inf", NULL, NULL, 0},
+  {"fma", "1", "3", "1", 0}, {"fma", "0.1", "0.1", "1e128", 1},
+  {"fma", "7", "1.1111111111111111", "inf", 0},
+  {"neg", "0.1", NULL, NULL, 0}, {"succ", "1", NULL, NULL, 0},
+  {"pred", "1", NULL, NULL, 0},
+};
+
+static const struct { const char *x; int e, inexact; } flagged_q[] = {
+  {"0.333", -2, 1}, {"1.25", -2, 0}, {"1.25", 2, 1}, {"0", 2, 0},
+  {"-1.5", 0, 1}, {"1e128", 130, 1}, {"4e128", 128, 0}, {"inf", 0, 0},
+};
+
+static const struct { const char *in; int inexact; } flagged_n[] = {
+  {"0.1", 0}, {"0.12345678901234567890", 1}, {"40031996687737745", 1},
+  {"40031996687737742", 0}, {"40031996687737750", 0}, {"1e-200", 1},
+  {"1e999999999999", 1}, {"1e-999999999999", 1}, {"-0e5", 0},
+  {"nan", 0}, {"12345678901234567890123", 1},
+  {"1000000000000000000000", 0},
+};
+
+static const struct { const char *spec, *in; int inexact; } flagged_p[] = {
+  {".2f", "0.125", 1}, {".3f", "0.125", 0}, {".0f", "2.5", 1},
+  {".0f", "2", 0}, {".2e", "1.23e5", 0}, {".1e", "1.23e5", 1},
+  {"g", "0.1", 0}, {"g", "1234567", 1}, {".0f", "1e-142", 1},
+  {"f", "inf", 0}, {"#.0f", "5", 0}, {".0e", "9.9e127", 1},
+  {".17g", "0.1", 0}, {"e", "nan", 0},
+};
+
+static void expect_flag(const char *what, int want) {
+  checks++;
+  if (da_inexact == want) return;
+  failures++;
+  printf("FAIL %s: inexact flag %d, want %d\n", what, da_inexact, want);
+}
+
+static void test_inexact(void) {
+  char what[200], buf[32];
+  da_inexact = 0;
+  da_div(val("1"), val("3"));
+  int arith = da_inexact;
+  da_inexact = 0;
+  da_snprintf(buf, sizeof buf, ".0f", val("0.5"));
+  int print = da_inexact;
+  printf("inexact flag %s in dec-alpha.c, %s in da_printing.c\n",
+         arith ? "on" : "off", print ? "on" : "off");
+  for (size_t i = 0; i < sizeof flagged / sizeof *flagged; i++) {
+    const char *y = flagged[i].y ? flagged[i].y : "";
+    const char *z = flagged[i].z ? flagged[i].z : "";
+    da dx = val(flagged[i].x), dy = val(y), dz = val(z);
+    snprintf(what, sizeof what, "%s %s %s %s", flagged[i].op,
+             flagged[i].x, y, z);
+    da_inexact = 0;
+    apply(flagged[i].op, dx, dy, dz);
+    expect_flag(what, arith && flagged[i].inexact);
+  }
+  for (size_t i = 0; i < sizeof flagged_q / sizeof *flagged_q; i++) {
+    da x = val(flagged_q[i].x);
+    snprintf(what, sizeof what, "quantize %s %d", flagged_q[i].x,
+             flagged_q[i].e);
+    da_inexact = 0;
+    da_quantize(x, flagged_q[i].e);
+    expect_flag(what, arith && flagged_q[i].inexact);
+  }
+  for (size_t i = 0; i < sizeof flagged_n / sizeof *flagged_n; i++) {
+    da_inexact = 0;
+    strtoda(flagged_n[i].in, NULL);
+    expect_flag(flagged_n[i].in, arith && flagged_n[i].inexact);
+  }
+  for (size_t i = 0; i < sizeof flagged_p / sizeof *flagged_p; i++) {
+    da x = val(flagged_p[i].in);
+    snprintf(what, sizeof what, "%s of %s", flagged_p[i].spec,
+             flagged_p[i].in);
+    da_inexact = 0;
+    da_snprintf(buf, sizeof buf, flagged_p[i].spec, x);
+    expect_flag(what, print && flagged_p[i].inexact);
+  }
+}
+
 static int print_strings(const char *what) {
   int print = !strcmp(what, "print");
   if (!print && strcmp(what, "strings")) {
@@ -562,6 +665,7 @@ int main(int argc, char **argv) {
   test_nan();
   test_printing();
   test_to_string();
+  test_inexact();
   printf("fixed: %ld checks, %ld failures\n", checks, failures);
   return failures != 0;
 }

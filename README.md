@@ -124,10 +124,10 @@ strictly greater than 40031996687737746 × 10^112, and to the largest
 finite value when it is at most that midpoint. A result below half the
 smallest subnormal rounds to zero.
 
-There are no other rounding modes, and no exception flags: inexact,
-overflow, underflow, division by zero and invalid operation cannot be
-observed other than through the result. This is a deliberate
-simplification.
+There are no other rounding modes. Of IEEE 754's exception flags, only
+inexact exists, as the compile-time option described below: overflow,
+underflow, division by zero and invalid operation cannot be observed
+other than through the result. This is a deliberate simplification.
 
 ## Special values
 
@@ -242,17 +242,55 @@ and declares the functions:
 
 There is no conversion from or to binary floating-point.
 
+## The inexact flag
+
+`da_inexact` is IEEE 754's inexact flag as a sticky thread-local
+variable: the library raises it when a result differs from the exact
+one, the infinities of overflow and the zeros of underflow included,
+and never clears it. A program that cares clears it before a
+computation and reads it after; one that does not can ignore it. A
+division by zero or an invalid operation leaves it alone, their
+infinity or NaN being the defined result, not a rounded one.
+
+Raising the flag is a compile-time option, taken file by file:
+`dec-alpha.c` compiled with `DA_INEXACT` defined raises it in the
+operations and in the conversions from integers and strings, and
+`da_printing.c` compiled with `DA_INEXACT_PRINTF` defined raises it in
+`da_snprintf` and `da_asprintf` when the precision drops nonzero
+digits. A file compiled without its macro never touches the flag. The
+variable and its declaration exist in every build, so that a program
+compiles against the same header whatever the choice, which is made
+when linking: the Makefile builds `dec-alpha-inexact.o` and
+`da_printing-inexact.o` beside the plain objects. The option costs a
+store per rounded result, one to three nanoseconds per operation on a
+current processor.[^tls]
+
+[^tls]: The store is a single instruction when the library is linked
+        into the executable. Compiled with `-fPIC` for a shared
+        library, the default model of thread-local storage reaches the
+        variable through a call to `__tls_get_addr` instead, and
+        `-ftls-model=initial-exec` brings the cost back to a load from
+        the GOT and the store. That `da_inexact` is the library's only
+        thread-local variable makes this model all the more fitting:
+        its four bytes take next to nothing of the static TLS space
+        that a library loaded by `dlopen` draws on with this model.
+
 ## Testing
 
 `make check` builds and runs two test programs. `test-fixed.c` holds
 cases with expected results written by hand: the syntax and rounding of
 `strtoda` on long numerals, the signs of zero, the special values, ties
 inside a decade and at its ends, the overflow threshold, subnormals,
-NaN propagation, the orderings, and the output of `da_snprintf` and
-`da_to_string`. It needs nothing beyond the library.
-`test-random.c` checks the library against an oracle built on GMP
-rationals, and requires GMP; `./test-random seed count` chooses the
-random seed and the number of iterations per section.
+NaN propagation, the orderings, the inexact flag on cases of every
+kind, and the output of `da_snprintf` and `da_to_string`. It needs
+nothing beyond the library. `test-random.c` checks the library against
+an oracle built on GMP rationals, and requires GMP; `./test-random seed
+count` chooses the random seed and the number of iterations per
+section. Each test program is linked with both builds of the library,
+and checks the inexact flag against the build: in the build with the
+option, raised exactly when the exact result is not representable, or
+when a printed value does not read back as the value printed, and in
+the other, never touched.
 
 The oracle is a single function that rounds a rational to the nearest
 DEC α value, or to the nearest value of its square root, using nothing

@@ -21,6 +21,14 @@
 
 extern const uint64_t da_powers[18];
 
+/* The inexact flag, raised by the rounding to the precision when this
+   file is compiled with DA_INEXACT_PRINTF defined, untouched otherwise: */
+#ifdef DA_INEXACT_PRINTF
+#define INEXACT(cond) (da_inexact |= (cond))
+#else
+#define INEXACT(cond) ((void)0)
+#endif
+
 void da_print(da d) {
   char buf[DA_STRING_SIZE];
   da_to_string(buf, d);
@@ -55,10 +63,15 @@ static void digits(sink *s, const char *nb, int nd, int lead, int lo,
   }
 }
 
-/* sd / 10^drop rounded to nearest, ties to even. sd is below 10^17. */
+/* sd / 10^drop rounded to nearest, ties to even. sd is nonzero and below
+   10^17. */
 static uint64_t round_drop(uint64_t sd, int drop) {
-  if (drop > 17) return 0;
+  if (drop > 17) {
+    INEXACT(1);
+    return 0;
+  }
   uint64_t p = da_powers[drop], n = sd / p, rem = sd - n * p;
+  INEXACT(rem != 0);
   return n + (2 * rem > p || 2 * rem == p && (n & 1));
 }
 
@@ -75,9 +88,9 @@ int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
     }
     break;
   }
-  /* A width beyond INT_MAX becomes -1, and makes the output too long. A
-     precision beyond it becomes INT_MAX, which makes the output too long
-     too unless it is clamped below. */
+  /* A width beyond INT_MAX becomes -1, and makes the output too long
+     for the int return type. A precision beyond it becomes INT_MAX,
+     which makes the output too long too unless it is clamped below. */
   int width = 0, prec = -1;
   for (; c >= '0' && c <= '9'; fmt++, c = *fmt) {
     int d = c - '0';

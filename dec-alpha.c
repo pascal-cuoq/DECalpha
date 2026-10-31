@@ -32,6 +32,16 @@ typedef __uint128_t ulll;
 /* The biased exponent of inf and NaN: */
 #define EXP_INFNAN 255
 
+/* The inexact flag, raised where results are rounded when this file is
+   compiled with DA_INEXACT defined, and untouched otherwise: */
+_Thread_local int da_inexact;
+
+#ifdef DA_INEXACT
+#define INEXACT(cond) (da_inexact |= (cond))
+#else
+#define INEXACT(cond) ((void)0)
+#endif
+
 const uint64_t da_powers[18]= {
   1,
   10,
@@ -166,10 +176,12 @@ static da_parts da_split(uint64_t r) {
 static da da_round(ulll m, ulll p, int exp) {
   uint64_t sd = m / p;
   ulll rem = m - (ulll)sd * p;
+  INEXACT(rem != 0);
   if (sd >= DECADE_HI) {
     // the only candidates are DECADE_HI and the DECADE_LO of the next
     // decade, 8 units apart. On the exact midpoint, DECADE_HI is the even
     // one.
+    INEXACT(sd != DECADE_HI);
     if (m > (ulll)(DECADE_HI + 4) * p) {
       exp++;
       sd = DECADE_LO;
@@ -179,7 +191,10 @@ static da da_round(ulll m, ulll p, int exp) {
   }
   else if (2 * rem > p || 2 * rem == p && (sd & 1))
     sd++;
-  if (exp >= EXP_INFNAN) return DA_INFINITY;
+  if (exp >= EXP_INFNAN) {
+    INEXACT(1); // overflow
+    return DA_INFINITY;
+  }
   return WRAP(sd, exp);
 }
 
@@ -191,7 +206,10 @@ static da da_round(ulll m, ulll p, int exp) {
 */
 static da da_round_any_exp(ulll m, ulll p, int exp) {
   if (exp < 0) {
-    if (exp < -16) return DA_ZERO;
+    if (exp < -16) {
+      INEXACT(1); // underflow to zero
+      return DA_ZERO;
+    }
     p *= da_powers[-exp];
     exp = 0;
   }
@@ -348,7 +366,10 @@ static da da_add_pos_pos(da dx, da dy) {
   int d = lp.exp - sp.exp;
   // s is then less than 0.41 units in the last place of l and cannot
   // change it
-  if (d > 16) return (da){l};
+  if (d > 16) {
+    INEXACT(s != 0);
+    return (da){l};
+  }
   // the exact sum, in units of 10^(sp.exp-142)
   ulll m = (ulll)lp.sd * da_powers[d] + sp.sd;
   // m / 10^d may have overflowed the decade; if so, divide by one more 10
@@ -367,7 +388,10 @@ static da da_sub_pos_pos(da dx, da dy) {
   // y is then less than 0.05 units in the last place of x and cannot
   // change it. (The value below DECADE_LO is 0.8 unit away, so 0.4 would
   // do, but 17 decades below x, y can still weigh 0.4003.)
-  if (d > 17) return dx;
+  if (d > 17) {
+    INEXACT(dy.r != 0);
+    return dx;
+  }
   // the exact difference fits in 64 bits, and may need normalizing after
   // cancellation
   if (d <= 1)
@@ -524,7 +548,13 @@ static da da_sqrt_pos(da dx) {
   // above n: it exceeds floor(sqrt(M)) only when sqrt(M) is within 1e-13
   // of the integer above, which is then the nearest one.
   ulll sq = (ulll)r * r;
-  r += M > sq + r;
+  int up = M > sq + r;
+  r += up;
+  // the root is exact when M is the square of the final r: sq, or
+  // sq + 2r - 1 after the increment. Such an r is never above DECADE_HI:
+  // M is a multiple of 10^15, so r would be one of 10^8, and no multiple
+  // of 10^8 lies in DECADE_HI + 1 .. DECADE_HI + 8.
+  INEXACT(M != sq + up * (2 * r - 1));
   // above DECADE_HI, the candidates are DECADE_HI and the DECADE_LO of the
   // next decade, whose representation is the next one, and the midpoint is
   // DECADE_HI + 4. sqrt(M) is above it only if r was above DECADE_HI.
@@ -552,8 +582,12 @@ da da_quantize(da dx, int e) {
   int64_t d = (int64_t)e + 142 - xp.exp;
   if (d <= 0) return dx; // x is a multiple of 10^e already
   // the significand, below 5e16, is then below 10^e / 2
-  if (d > 16) return (da){s};
+  if (d > 16) {
+    INEXACT(pos != 0);
+    return (da){s};
+  }
   uint64_t p = da_powers[d], n = xp.sd / p, rem = xp.sd - n * p;
+  INEXACT(rem != 0);
   n += 2 * rem > p || 2 * rem == p && (n & 1);
   if (n == 0) return (da){s};
   return (da){s | da_round_wide(n, e + 142).r};
@@ -565,10 +599,11 @@ da da_fma(da dx, da dy, da dz) {
   uint64_t x = dx.r, y = dy.r, z = dz.r;
   uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK,
     posz = z & ~SIGN_MASK;
-  // with an infinite or NaN operand, neither operation rounds
-  if (posx >= DA_INFINITY.r || posy >= DA_INFINITY.r
-      || posz >= DA_INFINITY.r)
+  // with an infinite or NaN x or y, neither operation rounds, and with
+  // an infinite or NaN z alone, the result is z whatever the product
+  if (posx >= DA_INFINITY.r || posy >= DA_INFINITY.r)
     return da_add(da_mult(dx, dy), dz);
+  if (posz >= DA_INFINITY.r) return dz;
   da_parts xp = da_split(posx), yp = da_split(posy), zp = da_split(posz);
   /* The product a * 10^ea, exact in 128 bits, and the addend b * 10^eb.
      The one with the coarser unit becomes a: it is scaled to the unit of
