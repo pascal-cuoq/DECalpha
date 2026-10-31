@@ -14,6 +14,16 @@ typedef __uint128_t ulll;
 #error "dec-alpha.c needs a 128-bit unsigned integer type"
 #endif
 
+/* The number of bits of a nonzero x, from the standard C23 function, or
+   from the count of leading zeros that GCC and Clang provide before
+   C23. */
+#if __STDC_VERSION__ >= 202311L
+#include <stdbit.h>
+#define bit_width(x) ((int)stdc_bit_width_ull(x))
+#else
+#define bit_width(x) (64 - __builtin_clzll(x))
+#endif
+
 #define DECADE_LO DA_DECADE_LO
 #define DECADE_HI DA_DECADE_HI
 
@@ -62,6 +72,52 @@ const uint64_t da_powers[18]= {
   1e16,
   1e17,
 };
+
+/* 10^n as a 128-bit constant, the double being exact up to 1e22: */
+#define TEN(n) ((ulll)1e##n)
+
+/* 10^j for j up to 35, the largest divisor of da_round_wide: */
+static const ulll tens[36] = {
+  TEN(0), TEN(1), TEN(2), TEN(3), TEN(4), TEN(5), TEN(6), TEN(7),
+  TEN(8), TEN(9), TEN(10), TEN(11), TEN(12), TEN(13), TEN(14), TEN(15),
+  TEN(16), TEN(17), TEN(18), TEN(19), TEN(20), TEN(21), TEN(22),
+  TEN(22) * TEN(1), TEN(22) * TEN(2), TEN(22) * TEN(3),
+  TEN(22) * TEN(4), TEN(22) * TEN(5), TEN(22) * TEN(6),
+  TEN(22) * TEN(7), TEN(22) * TEN(8), TEN(22) * TEN(9),
+  TEN(22) * TEN(10), TEN(22) * TEN(11), TEN(22) * TEN(12),
+  TEN(22) * TEN(13),
+};
+
+/* The smallest integer m such that m * 10^-j >= DECADE_LO, for j from -16
+   to 20: */
+#define BELOW(n) ((ulll)((DECADE_LO - 1) / (uint64_t)1e##n + 1))
+#define ABOVE(n) ((ulll)DECADE_LO * TEN(n))
+static const ulll decade_starts[37] = {
+  BELOW(16), BELOW(15), BELOW(14), BELOW(13), BELOW(12), BELOW(11),
+  BELOW(10), BELOW(9), BELOW(8), BELOW(7), BELOW(6), BELOW(5), BELOW(4),
+  BELOW(3), BELOW(2), BELOW(1), ABOVE(0), ABOVE(1), ABOVE(2), ABOVE(3),
+  ABOVE(4), ABOVE(5), ABOVE(6), ABOVE(7), ABOVE(8), ABOVE(9), ABOVE(10),
+  ABOVE(11), ABOVE(12), ABOVE(13), ABOVE(14), ABOVE(15), ABOVE(16),
+  ABOVE(17), ABOVE(18), ABOVE(19), ABOVE(20),
+};
+
+/* The decade of m: the j such that m * 10^-j is in a decade. Each bit
+   width holds one start of a decade at most, 2 being less than 10, so
+   the decade of the smallest m of that width, 2^(w-1), is the answer or
+   one below it. That decade, plus 16, is
+   floor((w-1) log10(2) + 16 - log10(DECADE_LO)), that is
+   floor((1233 w + 395.6) / 4096) within 2^-12, and 395 gives it exactly
+   for every width up to 119. Its steps depend on one another, costing
+   more than a loop that scales by 10 once or twice: the operations
+   whose operands span a few decades keep their loops. */
+/*@ requires 0 < m < DECADE_LO * 10^20; ensures -16 <= \result <= 19; */
+static int decade(ulll m) {
+  uint64_t hi = m >> 64;
+  int w = hi ? 64 + bit_width(hi) : bit_width((uint64_t)m);
+  int i = (1233 * w + 395) >> 12;
+  i += m >= decade_starts[i + 1];
+  return i - 16;
+}
 
 static char *copy(char *p, const char *s, int n) {
   for (int i = 0; i < n; i++) p[i] = s[i];
@@ -167,6 +223,19 @@ static da_parts da_split(uint64_t r) {
   return (da_parts){DECADE_LO + (o & SD_MASK), o >> EXP_SHIFT};
 }
 
+/* The da sd * 10^(exp-142), or infinity when exp is too large. */
+/*@
+  requires 0 <= exp;
+  requires DECADE_LO <= sd <= DECADE_HI || exp == 0 && sd < DECADE_LO;
+*/
+static da da_wrap(uint64_t sd, int exp) {
+  if (exp >= EXP_INFNAN) {
+    INEXACT(1); // overflow
+    return DA_INFINITY;
+  }
+  return WRAP(sd, exp);
+}
+
 /* Round (m / p) * 10^(exp-142) to the nearest da, ties to even. */
 /*@
   requires 0 <= exp;
@@ -191,11 +260,7 @@ static da da_round(ulll m, ulll p, int exp) {
   }
   else if (2 * rem > p || 2 * rem == p && (sd & 1))
     sd++;
-  if (exp >= EXP_INFNAN) {
-    INEXACT(1); // overflow
-    return DA_INFINITY;
-  }
-  return WRAP(sd, exp);
+  return da_wrap(sd, exp);
 }
 
 /* Same as da_round, but exp may be negative, denoting a subnormal or zero
@@ -218,20 +283,27 @@ static da da_round_any_exp(ulll m, ulll p, int exp) {
 
 /* Round m * 10^(exp-142) to the nearest da for any m and any exp, the
    result being infinite or zero when out of range. */
-/*@ requires m != 0; */
+/*@ requires 0 < m < DECADE_LO * 10^20; */
 static da da_round_wide(ulll m, int exp) {
-  while (exp > 0 && m < DECADE_LO) {
-    exp--;
-    m *= (ulll)10;
+  // the power of ten that brings m into a decade, or exp up to 0 for a
+  // subnormal result
+  int j = decade(m);
+  if (j < -exp) {
+    // m / 10^-exp is below 0.41, rounding to zero
+    if (j < -exp - 16) {
+      INEXACT(1); // underflow to zero
+      return DA_ZERO;
+    }
+    j = -exp;
   }
-  // p is the power of ten that brings m down to a decade
-  ulll p = 1;
-  int j = 0;
-  for (ulll t = m; t >= (ulll)DECADE_LO * 10; t /= 10) {
-    p *= 10;
-    j++;
+  // with no digit to drop, the result is exact, unless m is in the holes
+  // at the top of a decade. m * 10^-j, a multiple of 10 for a negative j,
+  // or below DECADE_LO when j was raised, never is: j is then 0.
+  if (j <= 0) {
+    uint64_t sd = (uint64_t)m * da_powers[-j];
+    if (sd <= DECADE_HI) return da_wrap(sd, exp + j);
   }
-  return da_round_any_exp(m, p, exp + j);
+  return da_round(m, tens[j], exp + j);
 }
 
 /*@ requires 0 <= exp < EXP_INFNAN; */
@@ -338,16 +410,8 @@ da strtoda(const char *nptr, char **endptr) {
   // beyond these bounds, the result is infinite or zero whatever m is
   if (scale > 300) scale = 300;
   if (scale < -300) scale = -300;
-  int exp = (int)scale + 142;
-  while (exp > 0 && m < DECADE_LO) {
-    exp--;
-    m *= UINT64_C(10);
-  }
-  // m has at most 19 digits, up to 3 more than fit in a decade
-  int j = (m >= DECADE_LO * 10) + (m >= DECADE_LO * 100)
-        + (m >= DECADE_LO * 1000);
-  da r = da_round_any_exp((ulll)m * 10 + sticky, da_powers[j + 1],
-                          exp + j);
+  // with sticky, m has 19 digits, and the appended one is dropped
+  da r = da_round_wide((ulll)m * 10 + sticky, (int)scale + 141);
   return (da){r.r | sign};
 }
 
@@ -621,8 +685,6 @@ da da_quantize(da dx, int e, int mode) {
   return (da){s | WRAP(m, exp).r};
 }
 
-#define LIMIT ((ulll)1 << 120)
-
 da da_fma(da dx, da dy, da dz) {
   uint64_t x = dx.r, y = dy.r, z = dz.r;
   uint64_t posx = x & ~SIGN_MASK, posy = y & ~SIGN_MASK,
@@ -634,21 +696,28 @@ da da_fma(da dx, da dy, da dz) {
   if (posz >= DA_INFINITY.r) return dz;
   da_parts xp = da_split(posx), yp = da_split(posy), zp = da_split(posz);
   /* The product a * 10^ea, exact in 128 bits, and the addend b * 10^eb.
-     The one with the coarser unit becomes a: it is scaled to the unit of
-     the other as long as it fits, after which either the units are equal
-     and the sum is exact, or a is so large that the part of b below its
-     unit can only decide ties, and is folded into a tenth of a unit. */
+     A zero term takes the unit of the other. The one with the coarser
+     unit becomes a: it is scaled to the unit of the other, but not beyond
+     decade 17, after which either the units are equal and the sum is
+     exact, or a is so large that the part of b below its unit can only
+     decide ties, and is folded into a tenth of a unit. a is then above
+     DECADE_LO * 10^17, and b / 10 below DECADE_HI^2 / 10, about 0.4 of
+     it. */
   ulll a = (ulll)xp.sd * yp.sd, b = zp.sd;
   int ea = xp.exp + yp.exp - 284, eb = zp.exp - 142;
   uint64_t sa = (x ^ y) & SIGN_MASK, sb = z & SIGN_MASK;
+  if (a == 0) ea = eb;
+  if (b == 0) eb = ea;
   if (ea < eb) {
     ulll t = a; a = b; b = t;
     int u = ea; ea = eb; eb = u;
     uint64_t v = sa; sa = sb; sb = v;
   }
-  while (ea > eb && a < LIMIT) {
-    a *= (ulll)10;
-    ea--;
+  if (ea > eb) {
+    int d = ea - eb, k = 17 - decade(a);
+    if (k > d) k = d;
+    a *= tens[k];
+    ea -= k;
   }
   ulll m;
   uint64_t s = sa;
@@ -658,11 +727,16 @@ da da_fma(da dx, da dy, da dz) {
     else { m = b - a; s = sb; }
   }
   else {
-    // q is 10^(ea-eb), or any larger power of ten when b is below it
-    // anyway
-    ulll q = 1;
-    for (int d = ea - eb; d > 0 && q <= b; d--) q *= 10;
-    ulll bq = b / q, sticky = b % q != 0;
+    /* q is 10^(ea-eb), but 10^17 at most, which keeps it in 64 bits.
+       Beyond, a is the addend scaled by 10^17 or more, since an addend b
+       would be below q, and 10 * a is a multiple of 10^18. Any nonzero
+       10 * bq + sticky below 4 * 10^17 then rounds the same, 4 units of
+       10^17 being the margin from the start of a decade to the middle
+       of the holes below it, and b / 10^17 is below
+       DECADE_HI^2 / 10^17, 1.6 * 10^16. */
+    int d = ea - eb;
+    uint64_t q = da_powers[d < 17 ? d : 17];
+    ulll bq = b / q, sticky = b != bq * q;
     m = sa == sb ? 10 * (a + bq) + sticky : 10 * (a - bq) - sticky;
     ea--;
   }

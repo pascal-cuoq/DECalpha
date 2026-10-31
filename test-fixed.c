@@ -78,6 +78,11 @@ static const struct {
   {"400319966877377460000000", DA_DECADE_HI, BIAS + 7, 24},
   /* just above it: up to DECADE_LO of the next decade */
   {"4003199668773774600000000000000001", DA_DECADE_LO, BIAS + 18, 34},
+  /* half the smallest subnormal: to the even 0; above it by a distant
+     1: up to it */
+  {"5e-143", 0, -1, 6}, {"50000000000000000000001e-165", 1, -1, 28},
+  /* a subnormal tie between 1e-142 and 2e-142, to the even one */
+  {"15e-143", 2, -1, 7},
 };
 
 static void test_numerals(void) {
@@ -189,6 +194,27 @@ static const struct { const char *op, *x, *y, *z, *want; } cases[] = {
   {"fma", "40031996687737742e112", "1", "5e112", "inf"},
   {"fma", "1e-142", "0.5", "0", "0"},
   {"fma", "1e-142", "0.5", "1e-142", "2e-142"},
+  /* a zero addend, the product rounded alone, with the product's sign
+     even when it rounds to zero */
+  {"fma", "40031996687737742", "40031996687737742", "0",
+   "1.6025607588070455e33"},
+  {"fma", "-40031996687737742", "40031996687737742", "0",
+   "-1.6025607588070455e33"},
+  {"fma", "-4003199668773775e-142", "4003199668773775e-142", "0", "-0"},
+  /* the addend coarser, the product's digits beyond its unit deciding a
+     tie, or not */
+  {"fma", "1.0000000000000001", "5e-17", "1", "1.0000000000000001"},
+  {"fma", "-1.0000000000000001", "5e-17", "1", "0.9999999999999999"},
+  /* the product 24 or 25 decades below the scaled addend, divided by
+     that power of ten, beyond 64 bits, and 40 decades below, all sticky.
+     Subtracted from the start of a decade, it leaves a value in the holes
+     below, rounded back up. */
+  {"fma", "-1", "1e-25", "1", "1"},
+  {"fma", "-1", "1e-25", "4.003199668773775", "4.003199668773775"},
+  {"fma", "-1", "1e-40", "4.003199668773775", "4.003199668773775"},
+  /* a product beyond the largest value, brought back by the addend */
+  {"fma", "40031996687737742e112", "2", "-40031996687737742e112",
+   "40031996687737742e112"},
   {"succ", "0", NULL, NULL, "1e-142"},
   {"succ", "-0", NULL, NULL, "1e-142"},
   {"pred", "0", NULL, NULL, "-1e-142"},
