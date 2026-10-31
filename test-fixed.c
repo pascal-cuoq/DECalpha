@@ -236,43 +236,88 @@ static void test_cases(void) {
 
 /* ---- quantize ---- */
 
+/* the modes, short */
+#define EVEN DA_TIES_TO_EVEN
+#define TAWAY DA_TIES_TO_AWAY
+#define ZERO DA_TOWARD_ZERO
+#define POS DA_TOWARD_POSITIVE
+#define NEG DA_TOWARD_NEGATIVE
+#define AWAY DA_AWAY_FROM_ZERO
+
 static const struct {
-  const char *x; int e; const char *want;
+  const char *x; int e, mode; const char *want;
 } quantized[] = {
-  {"2.5", 0, "2"},
-  {"3.5", 0, "4"},
-  {"-2.5", 0, "-2"},
-  {"1.005", -2, "1"},
-  {"1.015", -2, "1.02"},
-  {"123.456", -2, "123.46"},
-  {"123.456", 2, "100"},
-  {"0.4", 0, "0"},
-  {"-0.5", 0, "-0"},
-  {"0.5", 0, "0"},
-  {"1.5", 0, "2"},
-  {"1e20", -2, "1e20"},
-  {"1e20", -200, "1e20"},
-  {"inf", 0, "inf"},
-  {"-inf", 3, "-inf"},
-  {"nan", 5, "nan"},
-  {"40031996687737742e112", 130, "0"},
-  {"40031996687737742e112", 120, "inf"},
-  {"40031996687737742e112", 112, "40031996687737742e112"},
-  {"40031996687737742e112", 113, "40031996687737740e112"},
-  {"1e-142", -142, "1e-142"},
-  {"1e-142", -141, "0"},
-  {"5e-142", -141, "0"},
-  {"15e-142", -141, "2e-141"},
-  {"4003199668773775", 1, "4003199668773780"},
-  {"4003199668773775", 0, "4003199668773775"},
+  {"2.5", 0, EVEN, "2"},
+  {"3.5", 0, EVEN, "4"},
+  {"-2.5", 0, EVEN, "-2"},
+  {"1.005", -2, EVEN, "1"},
+  {"1.015", -2, EVEN, "1.02"},
+  {"123.456", -2, EVEN, "123.46"},
+  {"123.456", 2, EVEN, "100"},
+  {"0.4", 0, EVEN, "0"},
+  {"-0.5", 0, EVEN, "-0"},
+  {"0.5", 0, EVEN, "0"},
+  {"1.5", 0, EVEN, "2"},
+  {"1e20", -2, EVEN, "1e20"},
+  {"1e20", -200, EVEN, "1e20"},
+  {"inf", 0, EVEN, "inf"},
+  {"-inf", 3, EVEN, "-inf"},
+  {"nan", 5, EVEN, "nan"},
+  {"40031996687737742e112", 130, EVEN, "0"},
+  {"40031996687737742e112", 120, EVEN, "inf"},
+  {"40031996687737742e112", 112, EVEN, "40031996687737742e112"},
+  {"40031996687737742e112", 113, EVEN, "40031996687737740e112"},
+  {"1e-142", -142, EVEN, "1e-142"},
+  {"1e-142", -141, EVEN, "0"},
+  {"5e-142", -141, EVEN, "0"},
+  {"15e-142", -141, EVEN, "2e-141"},
+  {"4003199668773775", 1, EVEN, "4003199668773780"},
+  {"4003199668773775", 0, EVEN, "4003199668773775"},
+  {"2.5", 0, TAWAY, "3"},
+  {"-2.5", 0, TAWAY, "-3"},
+  {"2.4", 0, TAWAY, "2"},
+  {"-0.5", 0, TAWAY, "-1"},
+  {"1.005", -2, TAWAY, "1.01"},
+  {"2.9", 0, ZERO, "2"},
+  {"-2.9", 0, ZERO, "-2"},
+  {"-0.5", 0, ZERO, "-0"},
+  {"2.1", 0, POS, "3"},
+  {"-2.9", 0, POS, "-2"},
+  {"-0.5", 0, POS, "-0"},
+  {"0.5", 0, POS, "1"},
+  {"1e-142", -141, POS, "1e-141"},
+  {"2.9", 0, NEG, "2"},
+  {"-2.1", 0, NEG, "-3"},
+  {"0.5", 0, NEG, "0"},
+  {"2.1", 0, AWAY, "3"},
+  {"-2.1", 0, AWAY, "-3"},
+  {"2", 0, AWAY, "2"},
+  {"0", 5, AWAY, "0"},
+  {"-0", 5, POS, "-0"},
+  {"1e-100", 3, AWAY, "1000"},
+  {"-1e-100", 128, AWAY, "-1e128"},
+  {"1e-100", 129, AWAY, "inf"},
+  {"-1e-100", 2147483647, AWAY, "-inf"},
+  {"1e-100", 3, POS, "1000"},
+  {"1e-100", 3, NEG, "0"},
+  {"-1e-100", 3, NEG, "-1000"},
+  {"40031996687737742e112", 113, POS, "inf"},
+  {"40031996687737742e112", 113, NEG, "40031996687737740e112"},
+  {"-40031996687737742e112", 113, ZERO, "-40031996687737740e112"},
+  {"-40031996687737742e112", 113, AWAY, "-inf"},
+  {"40031996687737742", 1, POS, "40031996687737750"},
+  {"4003199668773775", 1, NEG, "4003199668773770"},
+  {"4003199668773775e-141", -140, NEG, "4003199668773770e-141"},
+  {"4003199668773775e-142", -141, NEG, "4003199668773770e-142"},
 };
 
 static void test_quantize(void) {
   char what[100];
   for (unsigned i = 0; i < sizeof quantized / sizeof *quantized; i++) {
-    snprintf(what, sizeof what, "quantize %s %d", quantized[i].x,
-             quantized[i].e);
-    expect(what, da_quantize(val(quantized[i].x), quantized[i].e),
+    snprintf(what, sizeof what, "quantize %s %d mode %d", quantized[i].x,
+             quantized[i].e, quantized[i].mode);
+    expect(what, da_quantize(val(quantized[i].x), quantized[i].e,
+                             quantized[i].mode),
            val(quantized[i].want));
   }
 }
@@ -333,7 +378,7 @@ static void test_nan(void) {
   expect("fma nan z", da_fma(one, one, b), b);
   expect("fma inf*0 before nan z", da_fma(DA_INFINITY, DA_ZERO, b),
          DA_NAN);
-  expect("quantize nan", da_quantize(b, 3), b);
+  expect("quantize nan", da_quantize(b, 3, AWAY), b);
   expect("succ nan", da_succ(b), b);
   expect("neg nan", da_neg(b), (da){b.r ^ SIGN});
 }
@@ -565,9 +610,14 @@ static const struct {
   {"pred", "1", NULL, NULL, 0},
 };
 
-static const struct { const char *x; int e, inexact; } flagged_q[] = {
-  {"0.333", -2, 1}, {"1.25", -2, 0}, {"1.25", 2, 1}, {"0", 2, 0},
-  {"-1.5", 0, 1}, {"1e128", 130, 1}, {"4e128", 128, 0}, {"inf", 0, 0},
+static const struct {
+  const char *x; int e, mode, inexact;
+} flagged_q[] = {
+  {"0.333", -2, EVEN, 1}, {"1.25", -2, EVEN, 0}, {"1.25", 2, EVEN, 1},
+  {"0", 2, EVEN, 0}, {"-1.5", 0, EVEN, 1}, {"1e128", 130, EVEN, 1},
+  {"4e128", 128, EVEN, 0}, {"inf", 0, EVEN, 0}, {"0.333", -2, ZERO, 1},
+  {"1.25", -2, AWAY, 0}, {"1e-100", 3, AWAY, 1}, {"0", 3, AWAY, 0},
+  {"4e128", 127, POS, 0}, {"4e128", 128, AWAY, 0}, {"1e128", 129, NEG, 1},
 };
 
 static const struct { const char *in; int inexact; } flagged_n[] = {
@@ -615,10 +665,10 @@ static void test_inexact(void) {
   }
   for (size_t i = 0; i < sizeof flagged_q / sizeof *flagged_q; i++) {
     da x = val(flagged_q[i].x);
-    snprintf(what, sizeof what, "quantize %s %d", flagged_q[i].x,
-             flagged_q[i].e);
+    snprintf(what, sizeof what, "quantize %s %d mode %d", flagged_q[i].x,
+             flagged_q[i].e, flagged_q[i].mode);
     da_inexact = 0;
-    da_quantize(x, flagged_q[i].e);
+    da_quantize(x, flagged_q[i].e, flagged_q[i].mode);
     expect_flag(what, arith && flagged_q[i].inexact);
   }
   for (size_t i = 0; i < sizeof flagged_n / sizeof *flagged_n; i++) {

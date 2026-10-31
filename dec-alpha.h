@@ -63,12 +63,22 @@ da da_mult(da dx, da dy);
 da da_div(da dx, da dy);
 da da_sqrt(da dx);
 
-/* The multiple of 10^e nearest to x, ties to even, or its rounding to a
-   da when it exceeds the largest finite value. This is IEEE 754's
-   quantize, without the restriction on the number of digits of the
-   result. NaN and infinities are unchanged, and the sign of x is kept when
-   the result is zero. */
-da da_quantize(da x, int e);
+/* x rounded to a multiple of 10^e in the rounding mode given, one of the
+   constants below, or infinite when that exceeds the largest finite value.
+   This is IEEE 754's quantize, without the restriction on the number of
+   digits of the result, and with the rounding direction as an argument.
+   NaN and infinities are unchanged, and the sign of x is kept when the
+   result is zero. The modes are IEEE 754's roundTiesToEven,
+   roundTiesToAway, roundTowardZero, roundTowardPositive and
+   roundTowardNegative, and rounding away from zero, which IEEE 754 lacks
+   and which the encoding of the others gives for free. */
+#define DA_TIES_TO_EVEN 0
+#define DA_TIES_TO_AWAY 1
+#define DA_TOWARD_ZERO 4
+#define DA_TOWARD_POSITIVE 5
+#define DA_TOWARD_NEGATIVE 6
+#define DA_AWAY_FROM_ZERO 7
+da da_quantize(da x, int e, int mode);
 
 /* x * y + z with a single rounding, as IEEE 754's fusedMultiplyAdd. */
 da da_fma(da x, da y, da z);

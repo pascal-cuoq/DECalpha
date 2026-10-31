@@ -260,15 +260,20 @@ static da o_fma(da dx, da dy, da dz) {
   return d;
 }
 
-/* the multiple of 10^e nearest to x, ties to even, then rounded */
-static da o_quantize(da dx, int e) {
+/* the multiple of 10^e next to x in the direction of mode, then rounded */
+static da o_quantize(da dx, int e, int mode) {
   uint64_t x = dx.r;
+  int neg = (x & SIGN) != 0;
+  /* the directed modes that round away from zero */
+  int away = mode == DA_AWAY_FROM_ZERO
+             || mode == (neg ? DA_TOWARD_NEGATIVE : DA_TOWARD_POSITIVE);
   if (mag(x) >= INF) return dx;
-  /* beyond these, every value is a multiple of 10^e, or below 10^e / 2 */
+  /* beyond these, every value is a multiple of 10^e, or below 10^e / 2,
+     and 10^e is beyond the largest finite value */
   if (e < -300) return dx;
   if (e > 300) {
     o_inexact |= mag(x) != 0;
-    return (da){x & SIGN};
+    return (da){mag(x) && away ? x & SIGN | INF : x & SIGN};
   }
   mpq_t q;
   mpz_t n, r;
@@ -283,9 +288,15 @@ static da o_quantize(da dx, int e) {
   mpz_mul_2exp(r, r, 1);
   int c = mpz_cmp(r, mpq_denref(q));
   if (c == 0) ties++;
-  if (c > 0 || c == 0 && mpz_odd_p(n)) mpz_add_ui(n, n, 1);
+  int up;
+  switch (mode) {
+  case DA_TIES_TO_EVEN: up = c > 0 || c == 0 && mpz_odd_p(n); break;
+  case DA_TIES_TO_AWAY: up = c >= 0; break;
+  default: up = away && mpz_sgn(r) != 0;
+  }
+  if (up) mpz_add_ui(n, n, 1);
   set_q(q, n, e);
-  da d = signed_da(nearest(q, 0), (x & SIGN) != 0);
+  da d = signed_da(nearest(q, 0), neg);
   mpq_clear(q);
   mpz_clears(n, r, NULL);
   return d;
@@ -878,8 +889,15 @@ static void test_quantize(long n) {
       break;
     default: e = coin() ? 2147483647 : -2147483647 - 1; break;
     }
-    ROUNDING(check2("quantize", x, (da){(uint64_t)(int64_t)e},
-                    da_quantize(x, e), o_quantize(x, e)));
+    static const int modes[] = {
+      DA_TIES_TO_EVEN, DA_TIES_TO_AWAY, DA_TOWARD_ZERO,
+      DA_TOWARD_POSITIVE, DA_TOWARD_NEGATIVE, DA_AWAY_FROM_ZERO,
+    };
+    int mode = modes[i / 5 % 6];
+    char op[20];
+    snprintf(op, sizeof op, "quantize mode %d", mode);
+    ROUNDING(check2(op, x, (da){(uint64_t)(int64_t)e},
+                    da_quantize(x, e, mode), o_quantize(x, e, mode)));
   }
 }
 

@@ -574,23 +574,51 @@ da da_sqrt(da dx) {
   return DA_NAN;
 }
 
-da da_quantize(da dx, int e) {
+/* The modes are bit sets: bit 2 marks the directed ones, in which bit 0
+   rounds positive values away from zero and bit 1 negative ones, and in
+   the modes to nearest, bit 0 breaks ties away from zero. */
+da da_quantize(da dx, int e, int mode) {
   uint64_t x = dx.r, s = x & SIGN_MASK, pos = x & ~SIGN_MASK;
-  if (pos >= DA_INFINITY.r) return dx;
+  // zeros, infinities and NaN are unchanged
+  if (pos - 1 >= DA_INFINITY.r - 1) return dx;
   da_parts xp = da_split(pos);
   // the number of low digits of the significand that 10^e does not resolve
   int64_t d = (int64_t)e + 142 - xp.exp;
   if (d <= 0) return dx; // x is a multiple of 10^e already
-  // the significand, below 5e16, is then below 10^e / 2
+  // whether a directed mode rounds x away from zero
+  int away = mode >> 2 & mode >> (s >> 63) & 1;
   if (d > 16) {
-    INEXACT(pos != 0);
-    return (da){s};
+    // the significand, below 5e16, is below 10^e / 2: the result is zero,
+    // or 10^e away from zero. 10^16 is a significand, and the biased
+    // exponent that goes with it, e + 126, is at least 1.
+    INEXACT(1);
+    if (!away) return (da){s};
+    int64_t exp = d + xp.exp - 16;
+    if (exp >= EXP_INFNAN) return (da){s | DA_INFINITY.r};
+    return (da){s | WRAP(UINT64_C(10000000000000000), exp).r};
   }
   uint64_t p = da_powers[d], n = xp.sd / p, rem = xp.sd - n * p;
   INEXACT(rem != 0);
-  n += 2 * rem > p || 2 * rem == p && (n & 1);
-  if (n == 0) return (da){s};
-  return (da){s | da_round_wide(n, e + 142).r};
+  int up = mode & 4 ? rem != 0 & away : 2 * rem + (mode | n & 1) > p;
+  uint64_t m = xp.sd - rem + (up ? p : 0);
+  if (m == 0) return (da){s};
+  /* m, a multiple of 10 at the scale of x, is exact with one step at
+     most. Above DECADE_HI it is 10 * DECADE_LO or more, the holes holding
+     no multiple of 10, and its tenth is in the next decade. Below
+     DECADE_LO, x being normal, it is above DECADE_LO / 10, and ten times
+     it is in the decade below. Overflow only follows from rounding away
+     from zero, where infinity is the result in every mode. */
+  int exp = xp.exp;
+  if (m > DECADE_HI) {
+    m /= 10;
+    exp++;
+    if (exp == EXP_INFNAN) return (da){s | DA_INFINITY.r};
+  }
+  else if (m < DECADE_LO && exp > 0) {
+    m *= 10;
+    exp--;
+  }
+  return (da){s | WRAP(m, exp).r};
 }
 
 #define LIMIT ((ulll)1 << 120)

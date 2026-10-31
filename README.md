@@ -204,10 +204,15 @@ and declares the functions:
   form and the setting of `errno`;
 * `da_neg`, `da_add`, `da_mult`, `da_div`, `da_sqrt` and `da_fma`,
   correctly rounded for all inputs, including special values;
-* `da_quantize(da x, int e)`, the multiple of 10^e nearest to `x`, ties
-  to even, which is IEEE 754's `quantize` without the restriction on the
+* `da_quantize(da x, int e, int mode)`, `x` rounded to a multiple of
+  10^e, which is IEEE 754's `quantize` without the restriction on the
   number of digits of the result: a value too large to have digits below
-  10^e is returned unchanged;
+  10^e is returned unchanged. The rounding direction is an argument,
+  one of `DA_TIES_TO_EVEN`, `DA_TIES_TO_AWAY`, `DA_TOWARD_ZERO`,
+  `DA_TOWARD_POSITIVE` and `DA_TOWARD_NEGATIVE`, the five of IEEE 754,
+  or `DA_AWAY_FROM_ZERO`. Ties away from zero is the rule of the euro
+  conversions and of commercial rounding, as ties to even is that of
+  banker's rounding;
 * `da_succ` and `da_pred`, the next value toward +inf and toward −inf,
   as IEEE 754's `nextUp` and `nextDown`;
 * `da_compare`, returning −1, 0, 1 or `DA_UNORDERED` (which is 2, so
