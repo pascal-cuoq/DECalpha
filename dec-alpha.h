@@ -48,12 +48,13 @@ da da_from_integer_and_biased_exp(uint64_t i, int exp);
 da da_from_integer(uint64_t i);
 
 /* Converts the initial portion of nptr to the nearest DEC alpha value, as
-   strtod does for doubles: optional whitespace and sign, then decimal
-   digits with an optional point and an optional exponent, or inf, infinity
-   or nan, all case-insensitive. Unlike strtod, it accepts no hexadecimal
-   form and never sets errno. If endptr is not null, it receives the
-   address of the first unconsumed character, or nptr when there is nothing
-   to convert, in which case the result is +0. */
+   strtod does for doubles in the C locale, whatever the current locale:
+   optional whitespace and sign, then decimal digits with an optional
+   point and an optional exponent, or inf, infinity or nan, all
+   case-insensitive. Unlike strtod, it accepts no hexadecimal form and
+   never sets errno. If endptr is not null, it receives the address of
+   the first unconsumed character, or nptr when there is nothing to
+   convert, in which case the result is +0. */
 da strtoda(const char *nptr, char **endptr);
 
 da da_neg(da x);

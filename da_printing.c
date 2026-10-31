@@ -5,7 +5,6 @@
    whose binary expansion is exactly a tie. This file is the only part of
    the library that depends on stdio and malloc. */
 
-#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -95,8 +94,8 @@ int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
     errno = EINVAL;
     return -1;
   }
-  _Bool upper = isupper((unsigned char)c);
-  char conv = (char)tolower((unsigned char)c);
+  _Bool upper = c < 'a';
+  char conv = c | 0x20;
   if (prec < 0) prec = 6;
   /* No value has more than 17 significant digits nor its leading digit
      beyond 10^128, so g without # prints the same for any precision from

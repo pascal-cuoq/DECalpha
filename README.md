@@ -20,18 +20,15 @@ precision. Unlike in many other decimal floating-point formats, each
 representable value has only one representation, and each 64-bit unsigned
 integer represents some DEC α value (which can be a NaN value).
 
-The positive DEC α values are represented in increasing order
-from 0 (representing 0) to 0x7f8e38e38e38e38e (representing the
+The DEC α values of positive sign are represented in increasing order
+from 0 (representing +0) to 0x7f8e38e38e38e38e (representing the
 maximum finite value, 4.0031996687737742E128) and 0x7f8e38e38e38e38f
 (representing +inf).  Within this range, the next representable value
 after a DEC α number D can always be obtained by adding one to the
 representation of D. This aspect is similar to binary IEEE 754
 formats, although the decimal formats specified in IEEE 754-2008 do
 not have these properties. These properties are also absent from
-.NET's 128-bit decimal format and Douglas Crockford' DEC64 format.
-
-
-
+.NET's 128-bit decimal format and Douglas Crockford's DEC64 format.
 
 ## Representation
 
@@ -146,40 +143,53 @@ the square root of a negative number are NaN. The square root of −0 is
 
 Every representation above that of infinity, in either sign, is a NaN.
 There are 32025597350190192 of them per sign, no distinction between
-quiet and signaling, and no meaning attached to the payload. An
-operation with NaN operands returns its first NaN operand unchanged. An
-invalid operation with non-NaN operands returns `DA_NAN`, the
+quiet and signaling, and no a priori meaning attached to the payload.
+An operation with NaN operands returns its first NaN operand unchanged.
+An invalid operation with non-NaN operands returns `DA_NAN`, the
 representation just above +inf.
 
 ## Ordering
 
-The representations of non-negative values are in increasing order, as
-the introduction says. Negative values are in sign-magnitude form, so
-their representations are in decreasing order of value, as in the IEEE
-754 binary formats. A total order in the sense of IEEE 754's
-`totalOrder`, with −0 below +0, negative NaNs below −inf and positive
-NaNs above +inf, is obtained by comparing as signed 64-bit integers the
-representations transformed by `r ^ (((int64_t)r >> 63) & INT64_MAX)`.
-`da_total_order` implements it.
+The representations of values of positive sign are in increasing
+order, as the introduction says. Values of negative sign are in
+sign-magnitude form, so their representations are in decreasing order
+of value, as in the IEEE 754 binary formats. A total order in the sense
+of IEEE 754's `totalOrder`, with −0 below +0, negative NaNs below −inf
+and positive NaNs above +inf, is obtained by comparing as signed 64-bit
+integers the representations transformed by
+`r ^ (((int64_t)r >> 63) & INT64_MAX)`. `da_total_order` implements it.
 
 ## The library
 
 The library is the files `dec-alpha.c` and `da_printing.c`, with their
 interface in `dec-alpha.h`, and `demo.c` is a program that shows it off.
 `dec-alpha.c` holds the arithmetic, the comparisons and the conversions
-from and to strings, and depends on nothing beyond `ctype.h` and an
-inlined square root; `da_printing.c` holds everything that writes to a
-stream or allocates, so that programs that need neither can leave it
-out. The library needs a 128-bit unsigned integer type to get at the
+from and to strings, and depends on nothing beyond `sqrt` from
+`math.h`, whose binary floating-point root seeds `da_sqrt`.[^fenv]
+
+[^fenv]: The rounding mode does not affect the result, but `da_sqrt` can
+         raise `FE_INEXACT` even when the root is exact. No other
+         floating-point flag is ever raised by the library.
+
+`da_printing.c` holds everything that writes to a stream or
+allocates, so that programs that need neither can leave it out. The
+locale is ignored both when printing and when parsing.
+
+The library needs a 128-bit unsigned integer type to get at the
 processor's 64×64→128 multiplication and 128/64→64 division: C23's
-`unsigned _BitInt(128)` when the compiler provides it, which GCC 14 and
-Clang 16 do in any language mode, and otherwise the `__uint128_t`
-extension of older GCC and Clang. `make` builds the demonstration with
-the project's warning flags and with `-fno-math-errno`, so that the
-binary floating-point square root used to seed `da_sqrt` is a single
-instruction and no math library is needed at link time. Without this
-flag, GCC keeps a fallback call for a negative argument that cannot
-occur and the program must be linked with `-lm`.
+`unsigned _BitInt(128)` when the compiler provides it, which Clang 14
+and later do on every target, and GCC 14 and later on IA-32, x86-64 and
+little-endian AArch64, joined in GCC 16 by 32-bit ARM and RISC-V, in any
+language mode, and otherwise the `__uint128_t` extension of older GCC
+and Clang, from GCC 4.6 and Clang 3.3 on, which only 64-bit targets
+provide.
+
+The command `make` builds the demonstration with the project's warning
+flags and with `-fno-math-errno`, which lets compilers inline `sqrt` as
+a single instruction on common 64-bit processors, so that no math
+library is needed at link time. Without this flag, GCC keeps a fallback
+call for a negative argument that cannot occur and the program must be
+linked with `-lm`.
 
 The header defines the type `da`, whose representation `r` is public,
 the constants `DA_DECADE_LO` and `DA_DECADE_HI`, the values `DA_ZERO`,
@@ -189,8 +199,9 @@ and declares the functions:
 * `da_from_integer(uint64_t)` and `da_from_integer_and_biased_exp(uint64_t
   i, int exp)`, which round `i` × 10^(`exp` − 142) to nearest;
 * `strtoda(const char *, char **)`, which converts the initial portion of
-  a string as `strtod` does, correctly rounded whatever the number of
-  digits, minus the hexadecimal form and the setting of `errno`;
+  a string as `strtod` does in the C locale, whatever the current one,
+  correctly rounded whatever the number of digits, minus the hexadecimal
+  form and the setting of `errno`;
 * `da_neg`, `da_add`, `da_mult`, `da_div`, `da_sqrt` and `da_fma`,
   correctly rounded for all inputs, including special values;
 * `da_quantize(da x, int e)`, the multiple of 10^e nearest to `x`, ties

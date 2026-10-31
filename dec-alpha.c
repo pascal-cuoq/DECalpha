@@ -1,4 +1,3 @@
-#include <ctype.h>
 #include <math.h>
 #include "dec-alpha.h"
 
@@ -243,14 +242,14 @@ da da_from_integer(uint64_t i) {
 static int prefix(const char *s, const char *word) {
   char c;
   for (; c = *word; s++, word++)
-    if (tolower((unsigned char)*s) != c) return 0;
+    if ((*s | 0x20) != c) return 0;
   return 1;
 }
 
 da strtoda(const char *nptr, char **endptr) {
   const char *s = nptr;
   char c;
-  for (c = *s; isspace((unsigned char)c); c = *s) s++;
+  for (c = *s; c == ' ' || c >= '\t' && c <= '\r'; c = *s) s++;
   uint64_t sign = 0;
   if (c == '+' || c == '-') {
     sign = c == '-' ? SIGN_MASK : 0;
@@ -266,7 +265,11 @@ da strtoda(const char *nptr, char **endptr) {
     s += 3;
     if (*s == '(') { // nan(n-char-sequence)
       const char *t = s + 1;
-      for (c = *t; isalnum((unsigned char)c) || c == '_'; c = *t) t++;
+      for (c = *t;; t++, c = *t) {
+        if (c >= '0' && c <= '9' || c == '_') continue;
+        char lower = c | 0x20;
+        if (lower < 'a' || lower > 'z') break;
+      }
       if (c == ')') s = t + 1;
     }
     if (endptr) *endptr = (char *)s;
@@ -304,9 +307,9 @@ da strtoda(const char *nptr, char **endptr) {
       t++;
       c = *t;
     }
-    if (isdigit((unsigned char)c)) {
+    if (c >= '0' && c <= '9') {
       long e = 0;
-      for (; isdigit((unsigned char)c); t++, c = *t)
+      for (; c >= '0' && c <= '9'; t++, c = *t)
         if (e < 1000000000) e = 10 * e + (c - '0');
       scale += eneg ? -e : e;
       s = t;
