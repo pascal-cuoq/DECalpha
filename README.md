@@ -49,8 +49,14 @@ shift. The gap between two consecutive values is one unit inside a
 decade, and eight units at the boundary between two decades, because
 9 × `DECADE_LO` exceeds 2^55 by 7.
 
-Values with biased exponent 0 have the same granularity as the
-subnormals, which are the natural continuation below `DECADE_LO`.
+Unlike in IEEE 754 binary formats, where biased exponent 0 encodes the
+subnormals and they share the scale of biased exponent 1, here biased
+exponent 0 is the first normal decade, from `DECADE_LO` × 10^-142 up.
+The subnormals form a separate range below `DECADE_LO`, for which the
+computation of `e` is not defined. They share the scale of the first
+normal decade instead: `sd` = `r` when `e` = 0, so the value is
+`r` × 10^-142 for every `r` below `DECADE_LO` + 2^55, with a gap of
+one unit, not eight, at `DECADE_LO`.
 
 ## Precision
 

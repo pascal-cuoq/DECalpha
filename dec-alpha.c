@@ -14,14 +14,20 @@ typedef __uint128_t ulll;
 #error "dec-alpha.c needs a 128-bit unsigned integer type"
 #endif
 
-/* The number of bits of a nonzero x, from the standard C23 function, or
+/* The number of bits of a nonzero x, from the standard C23 function,
    from the count of leading zeros that GCC and Clang provide before
-   C23. */
+   C23, or from a slow loop in plain C11. */
 #if __STDC_VERSION__ >= 202311L
 #include <stdbit.h>
 #define bit_width(x) ((int)stdc_bit_width_ull(x))
-#else
+#elif defined(__GNUC__)
 #define bit_width(x) (64 - __builtin_clzll(x))
+#else
+static int bit_width(uint64_t x) {
+  int w = 0;
+  for (; x; x >>= 1) w++;
+  return w;
+}
 #endif
 
 #define DECADE_LO DA_DECADE_LO
@@ -76,8 +82,8 @@ const uint64_t da_powers[18]= {
 /* 10^n as a 128-bit constant, the double being exact up to 1e22: */
 #define TEN(n) ((ulll)1e##n)
 
-/* 10^j for j up to 35, the largest divisor of da_round_wide: */
-static const ulll tens[36] = {
+/* 10^j for j up to 34, the largest divisor of da_round_wide: */
+static const ulll tens[35] = {
   TEN(0), TEN(1), TEN(2), TEN(3), TEN(4), TEN(5), TEN(6), TEN(7),
   TEN(8), TEN(9), TEN(10), TEN(11), TEN(12), TEN(13), TEN(14), TEN(15),
   TEN(16), TEN(17), TEN(18), TEN(19), TEN(20), TEN(21), TEN(22),
@@ -85,7 +91,6 @@ static const ulll tens[36] = {
   TEN(22) * TEN(4), TEN(22) * TEN(5), TEN(22) * TEN(6),
   TEN(22) * TEN(7), TEN(22) * TEN(8), TEN(22) * TEN(9),
   TEN(22) * TEN(10), TEN(22) * TEN(11), TEN(22) * TEN(12),
-  TEN(22) * TEN(13),
 };
 
 /* The smallest integer m such that m * 10^-j >= DECADE_LO, for j from -16
@@ -215,7 +220,8 @@ int da_to_string(char buf[DA_STRING_SIZE], da d) {
 typedef struct { uint64_t sd; int exp; } da_parts;
 
 /* Split a positive finite da into significand and biased exponent, so that
-   its value is sd * 10^(exp-142). Subnormals and zero have exp 0. */
+   its value is sd * 10^(exp-142). Subnormals and zero have exp 0, like
+   the first normal decade, whose scale they share. */
 /*@ requires 0 <= r < DA_INFINITY.r; */
 static da_parts da_split(uint64_t r) {
   int64_t o = (int64_t)r - (int64_t)DECADE_LO;
@@ -281,9 +287,9 @@ static da da_round_any_exp(ulll m, ulll p, int exp) {
   return da_round(m, p, exp);
 }
 
-/* Round m * 10^(exp-142) to the nearest da for any m and any exp, the
-   result being infinite or zero when out of range. */
-/*@ requires 0 < m < DECADE_LO * 10^20; */
+/* Round m * 10^(exp-142) to the nearest da for any m and any exp from
+   -34, the result being infinite or zero when out of range. */
+/*@ requires 0 < m < DECADE_LO * 10^20; requires exp >= -34; */
 static da da_round_wide(ulll m, int exp) {
   // the power of ten that brings m into a decade, or exp up to 0 for a
   // subnormal result
