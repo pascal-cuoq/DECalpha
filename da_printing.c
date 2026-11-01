@@ -19,7 +19,7 @@
 #define SD_MASK ((UINT64_C(1) << EXP_SHIFT) - 1)
 #define EXP_MIN (-142)
 
-extern const uint64_t da_powers[18];
+extern const uint64_t da_powers[20];
 
 /* The inexact flag, raised by the rounding to the precision when this
    file is compiled with DA_INEXACT_PRINTF defined, untouched otherwise: */

@@ -58,7 +58,8 @@ _Thread_local int da_inexact;
 #define INEXACT(cond) ((void)0)
 #endif
 
-const uint64_t da_powers[18]= {
+/* 10^n for n up to 19, the largest that fits in 64 bits: */
+const uint64_t da_powers[20]= {
   1,
   10,
   1e2,
@@ -77,21 +78,12 @@ const uint64_t da_powers[18]= {
   1e15,
   1e16,
   1e17,
+  1e18,
+  1e19,
 };
 
 /* 10^n as a 128-bit constant, the double being exact up to 1e22: */
 #define TEN(n) ((ulll)1e##n)
-
-/* 10^j for j up to 34, the largest divisor of da_round_wide: */
-static const ulll tens[35] = {
-  TEN(0), TEN(1), TEN(2), TEN(3), TEN(4), TEN(5), TEN(6), TEN(7),
-  TEN(8), TEN(9), TEN(10), TEN(11), TEN(12), TEN(13), TEN(14), TEN(15),
-  TEN(16), TEN(17), TEN(18), TEN(19), TEN(20), TEN(21), TEN(22),
-  TEN(22) * TEN(1), TEN(22) * TEN(2), TEN(22) * TEN(3),
-  TEN(22) * TEN(4), TEN(22) * TEN(5), TEN(22) * TEN(6),
-  TEN(22) * TEN(7), TEN(22) * TEN(8), TEN(22) * TEN(9),
-  TEN(22) * TEN(10), TEN(22) * TEN(11), TEN(22) * TEN(12),
-};
 
 /* The smallest integer m such that m * 10^-j >= DECADE_LO, for j from -16
    to 20: */
@@ -309,7 +301,9 @@ static da da_round_wide(ulll m, int exp) {
     uint64_t sd = (uint64_t)m * da_powers[-j];
     if (sd <= DECADE_HI) return da_wrap(sd, exp + j);
   }
-  return da_round(m, tens[j], exp + j);
+  // 10^j, beyond 64 bits only for a subnormal result
+  ulll p = j < 20 ? da_powers[j] : (ulll)da_powers[j - 17] * da_powers[17];
+  return da_round(m, p, exp + j);
 }
 
 /*@ requires 0 <= exp < EXP_INFNAN; */
@@ -722,8 +716,15 @@ da da_fma(da dx, da dy, da dz) {
   if (ea > eb) {
     int d = ea - eb, k = 17 - decade(a);
     if (k > d) k = d;
-    a *= tens[k];
+    // k exceeds 19 only for a subnormal addend: a product with a normal
+    // factor is DECADE_LO or more, and one of two subnormals is never
+    // the coarser term
     ea -= k;
+    if (k > 19) {
+      a *= da_powers[17];
+      k -= 17;
+    }
+    a *= da_powers[k];
   }
   ulll m;
   uint64_t s = sa;
