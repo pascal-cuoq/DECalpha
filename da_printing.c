@@ -40,8 +40,9 @@ void da_print(da d) {
 typedef struct { char *buf; size_t size, n; } sink;
 
 static void put(sink *s, char c) {
-  if (s->n + 1 < s->size) s->buf[s->n] = c;
-  s->n++;
+  size_t n = s->n;
+  if (n + 1 < s->size) s->buf[n] = c;
+  s->n = n + 1;
 }
 
 static void fill(sink *s, char c, int count) {
@@ -73,6 +74,11 @@ static uint64_t round_drop(uint64_t sd, int drop) {
   uint64_t p = da_powers[drop], n = sd / p, rem = sd - n * p;
   INEXACT(rem != 0);
   return n + (2 * rem > p || 2 * rem == p && (n & 1));
+}
+
+/* The decimal digits of n, as a string, and their number. */
+static int utoa(char nb[static 21], uint64_t n) {
+  return sprintf(nb, "%" PRIu64, n);
 }
 
 int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
@@ -154,7 +160,7 @@ int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
     }
     else { // e, or g which starts as e
       int sig = conv == 'e' ? prec + 1 : prec ? prec : 1;
-      int len = snprintf(nb, sizeof nb, "%" PRIu64, sd);
+      int len = utoa(nb, sd);
       int x = len - 1 + k; // the decimal exponent of the leading digit
       int drop = len - sig;
       if (drop > 0) {
@@ -170,7 +176,7 @@ int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
         P = sig - 1 - x;
       else {
         P = sig - 1;
-        snprintf(eb, sizeof eb, "%c%+03d", upper ? 'E' : 'e', x);
+        sprintf(eb, "%c%+03d", upper ? 'E' : 'e', x);
       }
       frac = P;
       if (conv == 'g' && !alt) { // drop the trailing zeros of the fraction
@@ -179,7 +185,7 @@ int da_snprintf(char *buf, size_t size, const char *fmt, da d) {
         frac = tz < P ? P - tz : 0;
       }
     }
-    nd = snprintf(nb, sizeof nb, "%" PRIu64, n);
+    nd = utoa(nb, n);
     if (nd + z < P + 1) lead = P + 1 - nd - z;
   }
   _Bool point = frac > 0 || alt;

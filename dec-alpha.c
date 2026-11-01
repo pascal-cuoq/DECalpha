@@ -104,7 +104,7 @@ static inline int decade(ulll m) {
   return j - 1 + up;
 }
 
-static char *copy(char *p, const char *s, int n) {
+static char *copy(char *restrict p, const char *restrict s, int n) {
   for (int i = 0; i < n; i++) p[i] = s[i];
   return p + n;
 }
@@ -209,12 +209,13 @@ static da_parts da_split(uint64_t r) {
   return (da_parts){DECADE_LO + (o & SD_MASK), o >> EXP_SHIFT};
 }
 
-/* The da sd * 10^(exp-142), or infinity when exp is too large. */
+/* The da sd * 10^(exp-142), or infinity when exp is too large. exp is
+   64-bit for da_quantize, whose e + 126 may exceed INT_MAX. */
 /*@
   requires 0 <= exp;
   requires DECADE_LO <= sd <= DECADE_HI || exp == 0 && sd < DECADE_LO;
 */
-static da da_wrap(uint64_t sd, int exp) {
+static da da_wrap(uint64_t sd, int64_t exp) {
   if (exp >= EXP_INFNAN) {
     INEXACT(1); // overflow
     return DA_INFINITY;
@@ -249,13 +250,15 @@ static da da_round(ulll m, ulll p, int exp) {
   return da_wrap(sd, exp);
 }
 
-/* Same as da_round, but exp may be negative, denoting a subnormal or zero
-   result. */
+/* Same as da_round, but m / p may be below DECADE_LO, m being then
+   multiplied by 10 until it is not, and exp may be negative, denoting a
+   subnormal or zero result. */
 /*@
-  requires DECADE_LO <= m / p < 10 * DECADE_LO;
+  requires 0 < m; requires m / p < 10 * DECADE_LO;
   requires exp < 0 ==> p * 10^-exp < 2^128;
 */
 static da da_round_any_exp(ulll m, ulll p, int exp) {
+  for (ulll t = (ulll)DECADE_LO * p; m < t; m *= 10) exp--;
   if (exp < 0) {
     if (exp < -16) {
       INEXACT(1); // underflow to zero
@@ -292,6 +295,17 @@ static da da_round_wide(ulll m, int exp) {
   // 10^j, beyond 64 bits only for a subnormal result
   ulll p = j < 20 ? da_powers[j] : (ulll)da_powers[j - 17] * da_powers[17];
   return da_round(m, p, exp + j);
+}
+
+/* Round m * 10^(exp-142) to the nearest da, m being in decade j or the
+   one above. */
+/*@
+  requires 0 <= j <= 17; requires 0 <= exp;
+  requires DECADE_LO * 10^j <= m < DECADE_LO * 10^(j+2);
+*/
+static da da_round_narrow(ulll m, int j, int exp) {
+  j += m >= (ulll)DECADE_LO * da_powers[j + 1];
+  return da_round(m, da_powers[j], exp + j);
 }
 
 /*@ requires 0 <= exp < EXP_INFNAN; */
@@ -373,11 +387,11 @@ da strtoda(const char *nptr, char **endptr) {
     else if (digits < 19) { m = 10 * m + d; digits++; scale -= frac; }
     else { sticky |= d != 0; scale += !frac; }
   }
-  if (!seen) {
-    if (endptr) *endptr = (char *)nptr;
-    return DA_ZERO;
+  if (!seen) { // nothing to convert: +0, nptr unconsumed
+    s = nptr;
+    sign = 0;
   }
-  if (c == 'e' || c == 'E') {
+  else if (c == 'e' || c == 'E') {
     const char *t = s + 1;
     c = *t;
     int eneg = c == '-';
@@ -424,9 +438,8 @@ static da da_add_pos_pos(da dx, da dy) {
   }
   // the exact sum, in units of 10^(sp.exp-142)
   ulll m = (ulll)lp.sd * da_powers[d] + sp.sd;
-  // m / 10^d may have overflowed the decade; if so, divide by one more 10
-  int j = d + (m >= (ulll)DECADE_LO * da_powers[d + 1]);
-  return da_round(m, da_powers[j], sp.exp + j);
+  // m / 10^d may have overflowed the decade
+  return da_round_narrow(m, d, sp.exp);
 }
 
 /* subtract two positive normal, subnormal or zero das, dy being at most
@@ -452,8 +465,7 @@ static da da_sub_pos_pos(da dx, da dy) {
   // no cancellation: the exact difference, in units of 10^(yp.exp-142),
   // is in x's decade or the one below
   ulll m = (ulll)xp.sd * da_powers[d] - yp.sd;
-  int j = d - (m < (ulll)DECADE_LO * da_powers[d]);
-  return da_round(m, da_powers[j], yp.exp + j);
+  return da_round_narrow(m, d - 1, yp.exp);
 }
 
 da da_neg(da x) {
@@ -497,10 +509,6 @@ static da da_mult_pos_pos(da dx, da dy) {
 
   if (m == 0)
     return DA_ZERO;
-  while (m < (ulll)DECADE_LO * (ulll)1e17) {
-    m *= (ulll)10;
-    exp -= 1;
-  }
   return da_round_any_exp(m, (ulll)1e17, exp);
 }
 
@@ -539,17 +547,12 @@ static da da_div_pos_pos(da dx, da dy) {
     yp.sd *= UINT64_C(10);
     yp.exp--;
   }
-  // the exact quotient is (m / yp.sd) * 10^(exp-142). m / yp.sd starts
-  // below 1e16 < 10 * DECADE_LO, and is scaled up until it reaches
-  // DECADE_LO: at most twice when x is normal, as its significand then
-  // exceeds yp.sd / 10
+  // the exact quotient is (m / yp.sd) * 10^(exp-142), m being
+  // xp.sd * 1e15. m / yp.sd is below 1e16 < 10 * DECADE_LO, and
+  // da_round_any_exp scales it up to DECADE_LO: at most twice when x is
+  // normal, as its significand then exceeds yp.sd / 10
   int exp = xp.exp - yp.exp + 127;
-  ulll m = (ulll)xp.sd * (ulll)1e15, t = (ulll)DECADE_LO * yp.sd;
-  while (m < t) {
-    m *= (ulll)10;
-    exp--;
-  }
-  return da_round_any_exp(m, yp.sd, exp);
+  return da_round_any_exp((ulll)xp.sd * (ulll)1e15, yp.sd, exp);
 }
 
 /* divide two das */
@@ -645,9 +648,8 @@ da da_quantize(da dx, int e, int mode) {
     // exponent that goes with it, e + 126, is at least 1.
     INEXACT(1);
     if (!away) return (da){s};
-    int64_t exp = d + xp.exp - 16;
-    if (exp >= EXP_INFNAN) return (da){s | DA_INFINITY.r};
-    return (da){s | WRAP(UINT64_C(10000000000000000), exp).r};
+    return (da){s | da_wrap(UINT64_C(10000000000000000),
+                            d + xp.exp - 16).r};
   }
   uint64_t p = da_powers[d], n = xp.sd / p, rem = xp.sd - n * p;
   INEXACT(rem != 0);
@@ -664,13 +666,12 @@ da da_quantize(da dx, int e, int mode) {
   if (m > DECADE_HI) {
     m /= 10;
     exp++;
-    if (exp == EXP_INFNAN) return (da){s | DA_INFINITY.r};
   }
   else if (m < DECADE_LO && exp > 0) {
     m *= 10;
     exp--;
   }
-  return (da){s | WRAP(m, exp).r};
+  return (da){s | da_wrap(m, exp).r};
 }
 
 da da_fma(da dx, da dy, da dz) {
