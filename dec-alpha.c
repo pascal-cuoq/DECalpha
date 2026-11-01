@@ -82,38 +82,26 @@ const uint64_t da_powers[20]= {
   1e19,
 };
 
-/* 10^n as a 128-bit constant, the double being exact up to 1e22: */
-#define TEN(n) ((ulll)1e##n)
-
-/* The smallest integer m such that m * 10^-j >= DECADE_LO, for j from -16
-   to 20: */
-#define BELOW(n) ((ulll)((DECADE_LO - 1) / (uint64_t)1e##n + 1))
-#define ABOVE(n) ((ulll)DECADE_LO * TEN(n))
-static const ulll decade_starts[37] = {
-  BELOW(16), BELOW(15), BELOW(14), BELOW(13), BELOW(12), BELOW(11),
-  BELOW(10), BELOW(9), BELOW(8), BELOW(7), BELOW(6), BELOW(5), BELOW(4),
-  BELOW(3), BELOW(2), BELOW(1), ABOVE(0), ABOVE(1), ABOVE(2), ABOVE(3),
-  ABOVE(4), ABOVE(5), ABOVE(6), ABOVE(7), ABOVE(8), ABOVE(9), ABOVE(10),
-  ABOVE(11), ABOVE(12), ABOVE(13), ABOVE(14), ABOVE(15), ABOVE(16),
-  ABOVE(17), ABOVE(18), ABOVE(19), ABOVE(20),
-};
-
 /* The decade of m: the j such that m * 10^-j is in a decade. Each bit
    width holds one start of a decade at most, 2 being less than 10, so
    the decade of the smallest m of that width, 2^(w-1), is the answer or
    one below it. That decade, plus 16, is
    floor((w-1) log10(2) + 16 - log10(DECADE_LO)), that is
    floor((1233 w + 395.6) / 4096) within 2^-12, and 395 gives it exactly
-   for every width up to 119. Its steps depend on one another, costing
-   more than a loop that scales by 10 once or twice: the operations
-   whose operands span a few decades keep their loops. */
+   for every width up to 119. m reaches the start of the decade above,
+   DECADE_LO * 10^j, when m * 10^-j >= DECADE_LO for j up to 0, and when
+   m >= 10 * DECADE_LO * 10^(j-1) above, 10^20 not fitting in 64 bits.
+   Its steps depend on one another, costing more than a loop that
+   scales by 10 once or twice: the operations whose operands span a few
+   decades keep their loops. */
 /*@ requires 0 < m < DECADE_LO * 10^20; ensures -16 <= \result <= 19; */
-static int decade(ulll m) {
+static inline int decade(ulll m) {
   uint64_t hi = m >> 64;
   int w = hi ? 64 + bit_width(hi) : bit_width((uint64_t)m);
-  int i = (1233 * w + 395) >> 12;
-  i += m >= decade_starts[i + 1];
-  return i - 16;
+  int j = ((1233 * w + 395) >> 12) - 15;
+  int up = j > 0 ? m >= (ulll)(10 * DECADE_LO) * da_powers[j - 1]
+                 : (uint64_t)m * da_powers[-j] >= DECADE_LO;
+  return j - 1 + up;
 }
 
 static char *copy(char *p, const char *s, int n) {
