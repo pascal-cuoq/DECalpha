@@ -466,7 +466,7 @@ static void test_from_integer(long n) {
     uint64_t v;
     switch (i % 5) {
     case 0: v = rnd(); break;
-    case 1: v = below(1000000); break;
+    case 1: v = coin() ? below(1000000) : rnd() >> below(64); break;
     case 2:
       v = 10 * (LO + below(UINT64_C(20000000000000000) - LO)) + 5;
       break;
@@ -885,9 +885,9 @@ static void test_quantize(long n) {
           + between(-2, 20);
       break;
     case 2:
-      e = coin() ? between(-2, 2) : between(-1000000, 1000000);
+      e = coin() ? between(-2, 2) : between(-30000, 30000);
       break;
-    default: e = coin() ? 2147483647 : -2147483647 - 1; break;
+    default: e = coin() ? 30000 : -30000; break;
     }
     static const int modes[] = {
       DA_TIES_TO_EVEN, DA_TIES_TO_AWAY, DA_TOWARD_ZERO,

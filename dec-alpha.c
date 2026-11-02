@@ -1,4 +1,5 @@
 #include <math.h>
+#include <string.h>
 #include "dec-alpha.h"
 
 /* A 128-bit unsigned type is needed for access to the 64x64->128
@@ -85,12 +86,12 @@ const uint64_t da_powers[20]= {
 /* The decade of m: the j such that m * 10^-j is in a decade. Each bit
    width holds one start of a decade at most, 2 being less than 10, so
    the decade of the smallest m of that width, 2^(w-1), is the answer or
-   one below it. That decade, plus 16, is
-   floor((w-1) log10(2) + 16 - log10(DECADE_LO)), that is
-   floor((1233 w + 395.6) / 4096) within 2^-12, and 395 gives it exactly
-   for every width up to 119. m reaches the start of the decade above,
-   DECADE_LO * 10^j, when m * 10^-j >= DECADE_LO for j up to 0, and when
-   m >= 10 * DECADE_LO * 10^(j-1) above, 10^20 not fitting in 64 bits.
+   one below it. That decade is floor((w-1) log10(2) - log10(DECADE_LO)),
+   that is floor((1233 w - 65140.4) / 4096) within 2^-12, and 65141
+   gives it exactly for every width up to 119. m reaches the start of
+   the decade above, DECADE_LO * 10^(j+1), when m * 10^-(j+1) >=
+   DECADE_LO for j below 0, and when m >= 10 * DECADE_LO * 10^j above,
+   10^20 not fitting in 64 bits.
    Its steps depend on one another, costing more than a loop that
    scales by 10 once or twice: the operations whose operands span a few
    decades keep their loops. */
@@ -98,19 +99,19 @@ const uint64_t da_powers[20]= {
 static inline int decade(ulll m) {
   uint64_t hi = m >> 64;
   int w = hi ? 64 + bit_width(hi) : bit_width((uint64_t)m);
-  int j = ((1233 * w + 395) >> 12) - 15;
-  int up = j > 0 ? m >= (ulll)(10 * DECADE_LO) * da_powers[j - 1]
-                 : (uint64_t)m * da_powers[-j] >= DECADE_LO;
-  return j - 1 + up;
+  int j = (1233 * w - 65141) >> 12;
+  int up = j >= 0 ? m >= (ulll)(10 * DECADE_LO) * da_powers[j]
+                  : (uint64_t)m * da_powers[~j] >= DECADE_LO;
+  return j + up;
 }
 
 static char *copy(char *restrict p, const char *restrict s, int n) {
-  for (int i = 0; i < n; i++) p[i] = s[i];
+  memcpy(p, s, (size_t)n);
   return p + n;
 }
 
 static char *fill(char *p, char c, int n) {
-  for (int i = 0; i < n; i++) p[i] = c;
+  memset(p, c, (size_t)n);
   return p + n;
 }
 
@@ -209,13 +210,12 @@ static da_parts da_split(uint64_t r) {
   return (da_parts){DECADE_LO + (o & SD_MASK), o >> EXP_SHIFT};
 }
 
-/* The da sd * 10^(exp-142), or infinity when exp is too large. exp is
-   64-bit for da_quantize, whose e + 126 may exceed INT_MAX. */
+/* The da sd * 10^(exp-142), or infinity when exp is too large. */
 /*@
   requires 0 <= exp;
   requires DECADE_LO <= sd <= DECADE_HI || exp == 0 && sd < DECADE_LO;
 */
-static da da_wrap(uint64_t sd, int64_t exp) {
+static da da_wrap(uint64_t sd, int exp) {
   if (exp >= EXP_INFNAN) {
     INEXACT(1); // overflow
     return DA_INFINITY;
@@ -311,9 +311,21 @@ static da da_round_narrow(ulll m, int j, int exp) {
 /*@ requires 0 <= exp < EXP_INFNAN; */
 da da_from_integer_and_biased_exp(uint64_t i, int exp) {
   if (i == 0) return DA_ZERO;
-  while (exp > 0 && i < DECADE_LO) {
-    exp--;
-    i *= UINT64_C(10);
+  if (i < DECADE_LO) {
+    // The largest power of ten that keeps every integer of the bit
+    // width w of i at most DECADE_HI, the holes above it holding no
+    // multiple of ten, is floor(log10(10 * DECADE_LO) - w log10(2)),
+    // that is floor((68003 - 1233 w) / 4096) within 2^-12, and 68003
+    // gives it exactly for every width up to 52. It leaves i at most one
+    // factor of ten short of the decade, implemented to suggest
+    // branchless code to the compiler.
+    // Both scalings stop at exp 0, where the result is subnormal.
+    int k = (68003 - 1233 * bit_width(i)) >> 12;
+    if (k > exp) k = exp;
+    uint64_t m = i * da_powers[k];
+    int more = m < DECADE_LO & k < exp;
+    exp -= k + more;
+    i = m * (1 + 9 * more);
   }
   // This expression is the correct one for the normalized case.
   // It works by miracle for the denormalized case (despite
@@ -593,14 +605,16 @@ static da da_sqrt_pos(da dx) {
     j += 2;
   }
   int exp = (xp.exp - j) / 2 + 71;
-  // the binary floating-point root is within a dozen units of sqrt(M),
-  // from where one Newton step lands on floor(sqrt(M)), or one above it
-  // when M is within a few hundred of the next perfect square
-  uint64_t r = sqrt((double)M);
+  // M, between 2^103 and 2^112, is converted from its top 47 bits or
+  // more, which keeps it in the range of a signed conversion and the
+  // binary root within a thousand units of sqrt(M). From there, one
+  // Newton step lands on floor(sqrt(M)), or one above it when M is
+  // within a million of the next perfect square
+  uint64_t r = (int64_t)sqrt((double)(int64_t)(M >> 56) * 0x1p56);
   r = (r + (uint64_t)(M / r)) / 2;
   // the nearest integer n to sqrt(M) is such that n(n-1) < M <= n(n+1). It
   // is never a tie, as that would require M = n^2 + n + 1/4. r is never
-  // above n: it exceeds floor(sqrt(M)) only when sqrt(M) is within 1e-13
+  // above n: it exceeds floor(sqrt(M)) only when sqrt(M) is within 2e-10
   // of the integer above, which is then the nearest one.
   ulll sq = (ulll)r * r;
   int up = M > sq + r;
@@ -638,7 +652,7 @@ da da_quantize(da dx, int e, int mode) {
   if (pos - 1 >= DA_INFINITY.r - 1) return dx;
   da_parts xp = da_split(pos);
   // the number of low digits of the significand that 10^e does not resolve
-  int64_t d = (int64_t)e + 142 - xp.exp;
+  int d = e + 142 - xp.exp;
   if (d <= 0) return dx; // x is a multiple of 10^e already
   // whether a directed mode rounds x away from zero
   int away = mode >> 2 & mode >> (s >> 63) & 1;

@@ -71,13 +71,15 @@ da da_sqrt(da dx);
    result is zero. The modes are IEEE 754's roundTiesToEven,
    roundTiesToAway, roundTowardZero, roundTowardPositive and
    roundTowardNegative, and rounding away from zero, which IEEE 754 lacks
-   and which the encoding of the others gives for free. */
+   and which the encoding of the others gives for free. e is between
+   -30000 and 30000. */
 #define DA_TIES_TO_EVEN 0
 #define DA_TIES_TO_AWAY 1
 #define DA_TOWARD_ZERO 4
 #define DA_TOWARD_POSITIVE 5
 #define DA_TOWARD_NEGATIVE 6
 #define DA_AWAY_FROM_ZERO 7
+/*@ requires -30000 <= e <= 30000; */
 da da_quantize(da x, int e, int mode);
 
 /* x * y + z with a single rounding, as IEEE 754's fusedMultiplyAdd. */
