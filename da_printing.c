@@ -29,10 +29,10 @@ extern const uint64_t da_powers[20];
 #define INEXACT(cond) ((void)0)
 #endif
 
-void da_print(da d) {
+int da_print(da d) {
   char buf[DA_STRING_SIZE];
   da_to_string(buf, d);
-  fputs(buf, stdout);
+  return fputs(buf, stdout);
 }
 
 /* Output that counts every character and stores those that fit, leaving

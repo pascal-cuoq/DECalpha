@@ -39,8 +39,9 @@ int da_to_string(char buf[DA_STRING_SIZE], da d);
 int da_snprintf(char *buf, size_t size, const char *fmt, da d);
 int da_asprintf(char **strp, const char *fmt, da d);
 
-/* da_to_string to stdout. */
-void da_print(da d);
+/* da_to_string to stdout. Returns what fputs returns: a nonnegative
+   value on success, EOF on a write error. */
+int da_print(da d);
 
 // Returns the closest DEC alpha representation of i * 10^(exp-142)
 /*@ requires 0 <= exp < 255; */

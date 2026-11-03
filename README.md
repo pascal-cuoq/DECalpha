@@ -245,7 +245,8 @@ and declares the functions:
   bytes always suffices, and the length is returned. This string is
   canonical: it is read back exactly by `strtoda`;
 * `da_print`, in `da_printing.c`, which writes `da_to_string` to the
-  standard output;
+  standard output and returns what `fputs` returns, nonnegative on
+  success and `EOF` on a write error;
 * `da_snprintf(char *buf, size_t size, const char *fmt, da d)` and
   `da_asprintf(char **strp, const char *fmt, da d)`, also in
   `da_printing.c`, which format `d` as `snprintf` and `asprintf` would
