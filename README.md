@@ -181,14 +181,24 @@ from and to strings, and depends on nothing beyond `sqrt` from
 allocates, so that programs that need neither can leave it out. The
 locale is ignored both when printing and when parsing.
 
-The library needs a 128-bit unsigned integer type to get at the
-processor's 64×64→128 multiplication and 128/64→64 division: C23's
+The library needs a 128-bit unsigned integer type for the products of
+two significands and the quotients of such products: C23's
 `unsigned _BitInt(128)` when the compiler provides it, which Clang 14
 and later do on every target, and GCC 14 and later on IA-32, x86-64 and
 little-endian AArch64, joined in GCC 16 by 32-bit ARM and RISC-V, in any
 language mode, and otherwise the `__uint128_t` extension of older GCC
 and Clang, from GCC 4.6 and Clang 3.3 on, which only 64-bit targets
 provide.
+
+With either type, the 64×64→128 multiplication compiles to a single
+instruction on 64-bit processors. The division does not compile to the
+processor's 128/64→64 division, which faults when the quotient exceeds
+64 bits: compilers cannot prove that it does not, and call the 128-bit
+division of their runtime library instead, `__udivti3` in libgcc and
+in compiler-rt. That routine reaches the same instruction when the
+divisor fits in 64 bits, as it does in the rounding of every result
+but the subnormal ones, and the call costs a few cycles over the
+instruction alone.
 
 The command `make` builds the demonstration with the project's warning
 flags and with `-fno-math-errno`, which lets compilers inline `sqrt` as
