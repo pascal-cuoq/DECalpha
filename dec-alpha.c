@@ -99,6 +99,10 @@ const uint64_t da_powers[20]= {
 static inline int decade(ulll m) {
   uint64_t hi = m >> 64;
   int w = hi ? 64 + bit_width(hi) : bit_width((uint64_t)m);
+  /* the shift below is one of the little portability trade-offs:
+     `>>` on a negative first operand is implementation-defined.
+     I don't know of any compiler that doesn't generate an arithmetic
+     shift. Much less for the 64-bit platforms that this library is for. */
   int j = (1233 * w - 65141) >> 12;
   int up = j >= 0 ? m >= (ulll)(10 * DECADE_LO) * da_powers[j]
                   : (uint64_t)m * da_powers[~j] >= DECADE_LO;
