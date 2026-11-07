@@ -249,8 +249,8 @@ static da da_round(ulll m, ulll p, int exp) {
     else
       sd = DECADE_HI;
   }
-  else if (2 * rem > p || 2 * rem == p && (sd & 1))
-    sd++;
+  else
+    sd += 2 * rem + (sd & 1) > p; // ties to even, without a branch
   return da_wrap(sd, exp);
 }
 
@@ -274,9 +274,11 @@ static da da_round_any_exp(ulll m, ulll p, int exp) {
   return da_round(m, p, exp);
 }
 
-/* Round m * 10^(exp-142) to the nearest da for any m and any exp from
-   -34, the result being infinite or zero when out of range. */
-/*@ requires 0 < m < DECADE_LO * 10^20; requires exp >= -34; */
+/* Round m * 10^(exp-142) to the nearest da for any m and any exp, the
+   result being infinite or zero when out of range. fma passes exp down
+   to -34, and strtoda, clamping its decimal exponent, down to -159: m
+   has at most 20 digits, so any exp below -35 underflows to zero. */
+/*@ requires 0 < m < DECADE_LO * 10^20; */
 static da da_round_wide(ulll m, int exp) {
   // the power of ten that brings m into a decade, or exp up to 0 for a
   // subnormal result

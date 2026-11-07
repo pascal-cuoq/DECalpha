@@ -30,6 +30,11 @@ formats, although the decimal formats specified in IEEE 754-2008 do
 not have these properties. These properties are also absent from
 .NET's 128-bit decimal format and Douglas Crockford's DEC64 format.
 
+Being available as a C library also distinguishes DEC α from both.
+Its only exotic requirement is a 128-bit integer type, so it should
+work with many old compilers as long as they target a 64-bit
+processor, and with many 32-bit processors given a modern compiler.
+
 ## Representation
 
 A DEC α value is a 64-bit unsigned integer `r`. Bit 63 is the sign and
@@ -130,10 +135,14 @@ strictly greater than 40031996687737746 × 10^112, and to the largest
 finite value when it is at most that midpoint. A result below half the
 smallest subnormal rounds to zero.
 
-There are no other rounding modes. Of IEEE 754's exception flags, only
-inexact exists, as the compile-time option described below: overflow,
-underflow, division by zero and invalid operation cannot be observed
-other than through the result. This is a deliberate simplification.
+There is no other rounding mode for the operations. A program that
+wants a result to a given number of decimal places, rounded in a given
+direction, can use `da_quantize`, which alone takes a rounding
+direction, the five of IEEE 754 and one more. Of IEEE 754's exception
+flags, only inexact exists, as an option selected at compile time.
+Overflow, underflow, division by zero and invalid operation cannot be
+observed other than through the result. This is a deliberate
+simplification.
 
 ## Special values
 
@@ -297,36 +306,9 @@ current processor.[^tls]
         its four bytes take next to nothing of the static TLS space
         that a library loaded by `dlopen` draws on with this model.
 
-## Testing
+## Use of AI
 
-`make check` builds and runs two test programs. `test-fixed.c` holds
-cases with expected results written by hand: the syntax and rounding of
-`strtoda` on long numerals, the signs of zero, the special values, ties
-inside a decade and at its ends, the overflow threshold, subnormals,
-NaN propagation, the orderings, the inexact flag on cases of every
-kind, and the output of `da_snprintf` and `da_to_string`. It needs
-nothing beyond the library. `test-random.c` checks the library against
-an oracle built on GMP rationals, and requires GMP; `./test-random seed
-count` chooses the random seed and the number of iterations per
-section. Each test program is linked with both builds of the library,
-and checks the inexact flag against the build: in the build with the
-option, raised exactly when the exact result is not representable, or
-when a printed value does not read back as the value printed, and in
-the other, never touched.
-
-The oracle is a single function that rounds a rational to the nearest
-DEC α value, or to the nearest value of its square root, using nothing
-but the definition of the representation: a binary search over the
-monotone encoding finds the two neighbors of the exact result, and a
-comparison with their midpoint decides, ties going to the even
-representation. Decoding the representation of +inf as `DECADE_LO` ×
-10^113 makes the overflow rule fall out of the same comparison.
-
-Each operation is exercised on uniformly random operands and on
-constructed ones: exact midpoints for multiplication and division,
-half-unit addends and exponent gaps around the cutoff for addition,
-the decade boundary in all operations, arguments whose square root is
-near a midpoint, subnormal operands and results, the overflow region,
-and every special value. The test prints how many exact ties each
-section met. `da_succ` and `da_pred` are checked for adjacency by
-rounding the midpoint of the two values nudged slightly either way.
+LLMs were involved in finishing the library (commits from 2026 and
+later). If you are looking for code untainted by LLM use, you have to
+go back to the 2019 commits. The format design was already there but
+be warned that the implementation sucked then.
