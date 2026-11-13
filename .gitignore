@@ -64,6 +64,10 @@ test-fixed
 test-fixed-inexact
 test-random
 test-random-inexact
+test-math-random
+test-math-random-inexact
+gen_sincos
+gen_log
 
 # Claude Code project instructions, kept local
 CLAUDE.md

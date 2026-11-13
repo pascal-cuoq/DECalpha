@@ -1,63 +1,9 @@
 #include <math.h>
 #include <string.h>
-#include "dec-alpha.h"
+#include "da_internal.h"
 
-/* A 128-bit unsigned type is needed for access to the 64x64->128
-   multiplication and 128/64->64 division that the host processor
-   hopefully provides. Prefer the standard C23 type; fall back to the
-   GCC/Clang extension for compilers that provide the latter but not the
-   former. */
-#if defined(__BITINT_MAXWIDTH__) && __BITINT_MAXWIDTH__ >= 128
-typedef unsigned _BitInt(128) ulll;
-#elif defined(__SIZEOF_INT128__)
-typedef __uint128_t ulll;
-#else
-#error "dec-alpha.c needs a 128-bit unsigned integer type"
-#endif
-
-/* The number of bits of a nonzero x, from the standard C23 function,
-   from the count of leading zeros that GCC and Clang provide before
-   C23, or from a slow loop in plain C11. */
-#if __STDC_VERSION__ >= 202311L
-#include <stdbit.h>
-#define bit_width(x) ((int)stdc_bit_width_ull(x))
-#elif defined(__GNUC__)
-#define bit_width(x) (64 - __builtin_clzll(x))
-#else
-static int bit_width(uint64_t x) {
-  int w = 0;
-  for (; x; x >>= 1) w++;
-  return w;
-}
-#endif
-
-#define DECADE_LO DA_DECADE_LO
-#define DECADE_HI DA_DECADE_HI
-
-/* After subtracting DECADE_LO from the representation of a normal da,
-   shift by EXP_SHIFT to obtain the biased exponent: */
-#define EXP_SHIFT 55
-#define SIGN_MASK UINT64_C(0x8000000000000000)
-#define SD_MASK ((UINT64_C(1)<<EXP_SHIFT)-1)
-
-#define WRAP(sd, exp) \
-  (da){DECADE_LO + ((sd - DECADE_LO) | ((uint64_t)exp << EXP_SHIFT))}
-
-/* The minimum unbiased exponent: */
-#define EXP_MIN (-142)
-
-/* The biased exponent of inf and NaN: */
-#define EXP_INFNAN 255
-
-/* The inexact flag, raised where results are rounded when this file is
-   compiled with DA_INEXACT defined, and untouched otherwise: */
+/* The inexact flag, which the INEXACT of da_internal.h raises: */
 _Thread_local int da_inexact;
-
-#ifdef DA_INEXACT
-#define INEXACT(cond) (da_inexact |= (cond))
-#else
-#define INEXACT(cond) ((void)0)
-#endif
 
 /* 10^n for n up to 19, the largest that fits in 64 bits: */
 const uint64_t da_powers[20]= {
@@ -277,7 +223,10 @@ static da da_round_any_exp(ulll m, ulll p, int exp) {
 /* Round m * 10^(exp-142) to the nearest da for any m and any exp, the
    result being infinite or zero when out of range. fma passes exp down
    to -34, and strtoda, clamping its decimal exponent, down to -159: m
-   has at most 20 digits, so any exp below -35 underflows to zero. */
+   has at most 20 digits, so any exp below -35 underflows to zero.
+   da_mult_integer passes the exponent it is given, from -30000 to
+   30254: the decade of its m is 19 at most and -16 at least, so any exp
+   below -35 underflows as well, and any above 270 overflows. */
 /*@ requires 0 < m < DECADE_LO * 10^20; */
 static da da_round_wide(ulll m, int exp) {
   // the power of ten that brings m into a decade, or exp up to 0 for a
@@ -550,6 +499,27 @@ da da_mult(da dx, da dy) {
     pos = DA_INFINITY.r;
   }
   return (da){pos | s};
+}
+
+/* x * y * 10^z with a single rounding. The product of the significand
+   by the magnitude of y is exact in 128 bits and may be in any decade
+   from 1 to DECADE_HI * 2^63, which is below DECADE_LO * 10^20: one
+   lookup of its decade, then at most one multiplication or one division
+   by a power of ten, as in fma. y is a positive zero when it is 0. */
+/*@ requires -30000 <= z <= 30000; */
+da da_mult_integer(da dx, int64_t y, int z) {
+  uint64_t x = dx.r, posx = x & ~SIGN_MASK;
+  uint64_t s = (x ^ (uint64_t)y) & SIGN_MASK;
+  if (posx >= DA_INFINITY.r) {
+    if (posx > DA_INFINITY.r) return dx;
+    // inf * 0
+    if (y == 0) return DA_NAN;
+    return (da){s | DA_INFINITY.r};
+  }
+  da_parts xp = da_split(posx);
+  ulll m = (ulll)xp.sd * (y < 0 ? -(uint64_t)y : (uint64_t)y);
+  if (m == 0) return (da){s};
+  return (da){s | da_round_wide(m, xp.exp + z).r};
 }
 
 /* divide two positive normal or subnormal das, neither of which is zero */

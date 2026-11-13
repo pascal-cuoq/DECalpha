@@ -11,22 +11,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "dec-alpha.h"
-
-/* The representation, as documented in the README and dec-alpha.c: */
-#define EXP_SHIFT 55
-#define SIGN_MASK (UINT64_C(1) << 63)
-#define SD_MASK ((UINT64_C(1) << EXP_SHIFT) - 1)
-#define EXP_MIN (-142)
-
-extern const uint64_t da_powers[20];
+#include "da_internal.h"
 
 /* The inexact flag, raised by the rounding to the precision when this
    file is compiled with DA_INEXACT_PRINTF defined, untouched otherwise: */
 #ifdef DA_INEXACT_PRINTF
-#define INEXACT(cond) (da_inexact |= (cond))
+#define INEXACT_PRINTF(cond) (da_inexact |= (cond))
 #else
-#define INEXACT(cond) ((void)0)
+#define INEXACT_PRINTF(cond) ((void)0)
 #endif
 
 int da_print(da d) {
@@ -68,11 +60,11 @@ static void digits(sink *s, const char *nb, int nd, int lead, int lo,
    10^17. */
 static uint64_t round_drop(uint64_t sd, int drop) {
   if (drop > 17) {
-    INEXACT(1);
+    INEXACT_PRINTF(1);
     return 0;
   }
   uint64_t p = da_powers[drop], n = sd / p, rem = sd - n * p;
-  INEXACT(rem != 0);
+  INEXACT_PRINTF(rem != 0);
   return n + (2 * rem > p || 2 * rem == p && (n & 1));
 }
 

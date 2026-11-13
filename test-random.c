@@ -6,85 +6,20 @@
    boundaries, cancellation, subnormals, overflow. The printing functions
    are compared with glibc's printf instead. The inexact flag is compared
    with the oracle's when the library was built with it, and checked to
-   stay clear otherwise. The fixed tests, with expected results written by
-   hand, are in test-fixed.c.
+   stay clear otherwise. The first failure stops the test. The fixed
+   tests, with expected results written by hand, are in test-fixed.c.
 
    Build: cc -std=c11 -O2 test-random.c dec-alpha.o da_printing.o -lgmp
           with either build of the library
-   Usage: ./test-random [seed] [count]         (defaults: 1 and 2000) */
+   Usage: ./test-random [seed] [count]
+          (defaults: the time in seconds since 1970, and 2000) */
 
-#include <gmp.h>
-#include <inttypes.h>
 #include <math.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include "dec-alpha.h"
+#include "test-random.h"
 
-#define SIGN UINT64_C(0x8000000000000000)
-/* as integer constants, usable in static initializers; main checks them */
-#define INF (UINT64_C(0x7f80000000000000) + LO)
-#define NAN_R (INF + 1)
-#define LO DA_DECADE_LO
-#define HI DA_DECADE_HI
-#define EXP_SHIFT 55
-#define SD_MASK ((UINT64_C(1) << EXP_SHIFT) - 1)
-#define BIAS 142
-#define NPOW 512
-
-static mpz_t pow10z[NPOW]; /* 10^0 .. 10^(NPOW-1) */
-
-static void set_u64(mpz_t z, uint64_t v) {
-  mpz_import(z, 1, 1, sizeof v, 0, 0, &v);
-}
-
-/* out = num * 10^pow, pow of either sign */
-static void set_q(mpq_t out, const mpz_t num, int pow) {
-  if (pow >= 0) {
-    mpz_mul(mpq_numref(out), num, pow10z[pow]);
-    mpz_set_ui(mpq_denref(out), 1);
-  }
-  else {
-    mpz_set(mpq_numref(out), num);
-    mpz_set(mpq_denref(out), pow10z[-pow]);
-  }
-  mpq_canonicalize(out);
-}
-
-static uint64_t mag(uint64_t r) { return r & ~SIGN; }
-static int is_nan(uint64_t r) { return mag(r) > INF; }
-static int is_inf(uint64_t r) { return mag(r) == INF; }
 static da signed_da(uint64_t m, int neg) {
   return (da){m | (neg ? SIGN : 0)};
-}
-
-/* The encoding of a normal value. */
-static da enc(uint64_t sd, int e) {
-  return (da){LO + ((sd - LO) | ((uint64_t)e << EXP_SHIFT))};
-}
-
-/* z = the value of the magnitude r (no sign bit, at most INF) times
-   10^142, which is the integer sd * 10^e. Decoding INF this way gives
-   LO * 10^113, the value that would follow the largest finite one: it is
-   the threshold above which results overflow, midpoint rule included. */
-static void z_of(mpz_t z, uint64_t r) {
-  if (r < LO) {
-    set_u64(z, r);
-    return;
-  }
-  uint64_t o = r - LO;
-  set_u64(z, LO + (o & SD_MASK));
-  mpz_mul(z, z, pow10z[o >> EXP_SHIFT]);
-}
-
-/* q = the value of the magnitude r */
-static void q_of(mpq_t q, uint64_t r) {
-  mpz_t z;
-  mpz_init(z);
-  z_of(z, r);
-  set_q(q, z, -BIAS);
-  mpz_clear(z);
 }
 
 static long ties; /* exact midpoints met by nearest() */
@@ -260,6 +195,31 @@ static da o_fma(da dx, da dy, da dz) {
   return d;
 }
 
+/* x * y * 10^z from the exact rational, y being a positive zero when
+   it is 0 */
+static da o_mult_integer(da dx, int64_t y, int z) {
+  uint64_t x = dx.r;
+  if (is_nan(x)) return dx;
+  int neg = ((x & SIGN) != 0) != (y < 0);
+  if (is_inf(x)) return y ? signed_da(INF, neg) : DA_NAN;
+  /* beyond these, a nonzero result is infinite or zero whatever x and y
+     are, as it already is at them */
+  if (z > 400) z = 400;
+  if (z < -400) z = -400;
+  mpz_t n;
+  mpq_t q, t;
+  mpz_init(n);
+  mpq_inits(q, t, NULL);
+  q_of(q, mag(x));
+  set_u64(n, y < 0 ? -(uint64_t)y : (uint64_t)y);
+  set_q(t, n, z);
+  mpq_mul(q, q, t);
+  da d = signed_da(nearest(q, 0), neg);
+  mpz_clear(n);
+  mpq_clears(q, t, NULL);
+  return d;
+}
+
 /* the multiple of 10^e next to x in the direction of mode, then rounded */
 static da o_quantize(da dx, int e, int mode) {
   uint64_t x = dx.r;
@@ -304,50 +264,42 @@ static da o_quantize(da dx, int e, int mode) {
 
 /* ---- reporting ---- */
 
-static long checks, failures;
 /* whether dec-alpha.c and da_printing.c were built with the inexact flag:
    main probes the library. If so, the flag must be raised exactly when the
    oracle raises its own, and otherwise it must never be touched. */
 static int inexact_arith, inexact_printf;
 static int flagged; /* set by ROUNDING for check() to compare the flags */
 
-static void show(const char *what, da d) {
-  printf("  %4s = 0x%016" PRIx64 " = ", what, d.r);
-  da_print(d);
-  puts("");
-}
-
-static void check(const char *op, da x, const da *y, da got, da want) {
+/* got, the result of op on x and on y and z when they are not null,
+   must be want, with the inexact flag of the oracle in a rounding
+   operation */
+static void check(const char *op, da x, const da *y, const da *z,
+                  da got, da want) {
   checks++;
   int want_flag = inexact_arith && o_inexact;
   int flag_ok = !flagged || da_inexact == want_flag;
-  if (got.r == want.r && flag_ok) return;
-  failures++;
-  printf("FAIL %s\n", op);
+  if (likely(got.r == want.r && flag_ok)) return;
+  failure(op, got.r != want.r ? "wrong result" : "wrong inexact flag");
   show("x", x);
   if (y) show("y", *y);
+  if (z) show("z", *z);
   show("got", got);
   show("want", want);
   if (!flag_ok)
     printf("  inexact flag %d, want %d\n", da_inexact, want_flag);
-  if (failures >= 50) {
-    puts("too many failures, stopping");
-    exit(1);
-  }
-}
-
-static void check2(const char *op, da x, da y, da got, da want) {
-  check(op, x, &y, got, want);
+  stop();
 }
 
 static void check1(const char *op, da x, da got, da want) {
-  check(op, x, NULL, got, want);
+  check(op, x, NULL, NULL, got, want);
+}
+
+static void check2(const char *op, da x, da y, da got, da want) {
+  check(op, x, &y, NULL, got, want);
 }
 
 static void check3(const char *op, da x, da y, da z, da got, da want) {
-  long f = failures;
-  check(op, x, &y, got, want);
-  if (failures > f) show("z", z);
+  check(op, x, &y, &z, got, want);
 }
 
 /* The check of an operation that rounds: both inexact flags are cleared
@@ -357,21 +309,6 @@ static void check3(const char *op, da x, da y, da z, da got, da want) {
   (da_inexact = o_inexact = 0, flagged = 1, check_call, flagged = 0)
 
 /* ---- random inputs ---- */
-
-static uint64_t state;
-
-static uint64_t rnd(void) { /* splitmix64 */
-  uint64_t z = (state += UINT64_C(0x9e3779b97f4a7c15));
-  z = (z ^ (z >> 30)) * UINT64_C(0xbf58476d1ce4e5b9);
-  z = (z ^ (z >> 27)) * UINT64_C(0x94d049bb133111eb);
-  return z ^ (z >> 31);
-}
-
-static uint64_t below(uint64_t n) { return rnd() % n; }
-static int between(int a, int b) { return a + (int)below(b - a + 1); }
-static int coin(void) { return rnd() >> 63; }
-static int exp_rand(void) { return (int)below(255); }
-static uint64_t sd_rand(void) { return LO + below(HI - LO + 1); }
 
 /* a significand at a decade edge, a round number or the boundary
    midpoint */
@@ -762,14 +699,17 @@ static void test_strtoda(long n) {
     da got = strtoda(buf, &end);
     da want = o_strtoda(buf);
     int want_flag = inexact_arith && o_inexact;
-    if (got.r != want.r || *end || da_inexact != want_flag) {
-      failures++;
-      printf("FAIL strtoda \"%s\"\n", buf);
+    checks++;
+    if (unlikely(got.r != want.r || *end || da_inexact != want_flag)) {
+      failure("strtoda", got.r != want.r ? "wrong result"
+                         : *end ? "numeral not consumed to the end"
+                                : "wrong inexact flag");
+      printf("  numeral \"%s\", consumed %d\n", buf, (int)(end - buf));
       show("got", got);
       show("want", want);
       printf("  inexact flag %d, want %d\n", da_inexact, want_flag);
+      stop();
     }
-    checks++;
   }
 }
 
@@ -867,6 +807,70 @@ static void test_fma(long n) {
   }
 }
 
+/* an integer of any number of bits up to 63, of either sign */
+static int64_t y_rand(void) {
+  int64_t a = (int64_t)(rnd() >> between(1, 63));
+  return coin() ? a : -a;
+}
+
+/* the number of decimal digits of y, 0 for 0 */
+static int digits(int64_t y) {
+  int d = 0;
+  for (; y; y /= 10) d++;
+  return d;
+}
+
+static void test_mult_integer(long n) {
+  for (long i = 0; i < n; i++) {
+    da x;
+    int64_t y = y_rand();
+    int z, e = exp_rand();
+    switch (i % 8) {
+    case 0: x = da_rand(); z = between(-60, 60); break;
+    case 1: { /* (2t+1) * 5 = 10t + 5, a midpoint, in every decade */
+      int k = (int)below(19);
+      x = signed_da(enc(2 * (LO + below(UINT64_C(20000000000000000) - LO))
+                        + 1, e).r, coin());
+      y = (int64_t)(5 * mpz_get_ui(pow10z[k])) * (coin() ? 1 : -1);
+      z = between(-20, 260) - e - k;
+      break;
+    }
+    case 2: /* decade boundaries: HI * m, LO * m, 2 * 20015998343868873 */
+      x = signed_da(enc(sd_edge(), e).r, coin());
+      y = between(-99, 99) * (int64_t)mpz_get_ui(pow10z[below(17)]);
+      z = between(-3, 3);
+      break;
+    case 3: /* subnormal results and underflow */
+      x = signed_da(enc(coin() ? sd_edge() : sd_rand(), e).r, coin());
+      z = between(-20, 4) - e - digits(y);
+      break;
+    case 4: /* near overflow */
+      x = signed_da(enc(coin() ? sd_edge() : sd_rand(), e).r, coin());
+      z = 254 + between(-3, 3) - e - digits(y);
+      break;
+    case 5: /* a subnormal operand */
+      x = signed_da(below(LO), coin());
+      z = between(-20, 160);
+      break;
+    case 6: /* the product by a small integer */
+      x = finite_rand();
+      y = between(-1000, 1000);
+      z = 0;
+      break;
+    default: { /* special values and the ends of the ranges */
+      static const int64_t ys[] = {0, 1, -1, INT64_MIN, INT64_MAX};
+      x = coin() ? special_rand() : da_rand();
+      if (coin()) y = ys[below(5)];
+      z = coin() ? between(-30000, 30000) : between(-1, 1) * 30000;
+      break;
+    }
+    }
+    ROUNDING(check3("mult_integer", x, (da){(uint64_t)y},
+                    (da){(uint64_t)(int64_t)z}, da_mult_integer(x, y, z),
+                    o_mult_integer(x, y, z)));
+  }
+}
+
 static void test_quantize(long n) {
   for (long i = 0; i < n; i++) {
     da x = i % 5 ? finite_rand() : da_rand();
@@ -917,18 +921,25 @@ static void test_to_string(long n) {
     int nan = (x.r & ~SIGN) > INF;
     uint64_t want = nan ? NAN_R | (x.r & SIGN) : x.r;
     checks++;
-    if (len != (int)strlen(s) || len >= DA_STRING_SIZE || *end
-        || back.r != want || da_inexact) {
-      failures++;
-      printf("FAIL to_string of 0x%016" PRIx64 ": \"%s\", length %d\n",
-             x.r, s, len);
+    int bad_len = len != (int)strlen(s) || len >= DA_STRING_SIZE;
+    if (unlikely(bad_len || *end || back.r != want || da_inexact)) {
+      failure("to_string", bad_len ? "wrong length"
+                           : *end || back.r != want
+                           ? "does not read back as the value"
+                           : "inexact flag raised");
+      show("x", x);
+      printf("  string \"%s\", length %d\n", s, len);
+      stop();
     }
     if ((x.r & ~SIGN) >= INF) continue;
     da_snprintf(t, sizeof t, ".17G", x);
     checks++;
-    if (strcmp(s, t) || da_inexact) {
-      failures++;
-      printf("FAIL to_string \"%s\" differs from .17G \"%s\"\n", s, t);
+    if (unlikely(strcmp(s, t) || da_inexact)) {
+      failure("to_string", da_inexact ? "inexact flag raised"
+                                      : "differs from .17G");
+      show("x", x);
+      printf("  string \"%s\", .17G \"%s\"\n", s, t);
+      stop();
     }
   }
 }
@@ -965,12 +976,12 @@ static void test_snprintf(long n) {
         : da_from_integer_and_biased_exp(m * p5, BIAS + e);
       q_of(q, x.r);
       mpq_set_d(qd, v);
-      if (!mpq_equal(q, qd)) {
+      if (unlikely(!mpq_equal(q, qd))) {
         checks++;
-        failures++;
-        printf("FAIL snprintf: %.17g is not exactly 0x%016" PRIx64 "\n", v,
-               x.r);
-        continue;
+        failure("snprintf", "the test's double is not the value");
+        printf("  double %.17g\n", v);
+        show("x", x);
+        stop();
       }
     }
     if (coin()) {
@@ -1002,16 +1013,24 @@ static void test_snprintf(long n) {
     int tn = da_snprintf(gt, size, spec, x);
     int want_flag = inexact_printf && strtoda(want, NULL).r != x.r;
     checks++;
-    if (gn != wn || strcmp(got, want) || an != wn || strcmp(s, want)
-        || tn != wn || memcmp(wt, gt, sizeof wt)
-        || flag != want_flag || aflag != want_flag) {
-      failures++;
-      printf("FAIL snprintf \"%s\" of 0x%016" PRIx64 ": want %d \"%s\", "
-             "got %d \"%s\", asprintf %d \"%s\", size %zu %d \"%.*s\"\n",
-             spec, x.r, wn, want, gn, got, an, an < 0 ? "" : s, size, tn,
+    if (unlikely(gn != wn || strcmp(got, want) || an != wn
+                 || strcmp(s, want) || tn != wn
+                 || memcmp(wt, gt, sizeof wt)
+                 || flag != want_flag || aflag != want_flag)) {
+      int flag_only = gn == wn && !strcmp(got, want) && an == wn
+        && !strcmp(s, want) && tn == wn && !memcmp(wt, gt, sizeof wt);
+      failure("snprintf", flag_only ? "wrong inexact flag"
+                                    : "differs from printf");
+      show("x", x);
+      printf("  spec \"%s\": printf %d \"%s\"\n", spec, wn, want);
+      printf("  da_snprintf %d \"%s\", da_asprintf %d \"%s\"\n", gn,
+             got, an, an < 0 ? "" : s);
+      printf("  size %zu: printf \"%.*s\", da_snprintf %d \"%.*s\"\n",
+             size, (int)(size ? size - 1 : 0), wt, tn,
              (int)(size ? size - 1 : 0), gt);
       printf("  inexact flag %d and %d, want %d\n", flag, aflag,
              want_flag);
+      stop();
     }
     free(s);
   }
@@ -1025,17 +1044,7 @@ static void section(const char *name, void (*f)(long), long n) {
 }
 
 int main(int argc, char **argv) {
-  state = argc > 1 ? strtoull(argv[1], NULL, 0) : 1;
-  long n = argc > 2 ? strtol(argv[2], NULL, 0) : 2000;
-  if (INF != DA_INFINITY.r || NAN_R != DA_NAN.r) {
-    puts("constants out of sync with dec-alpha.h");
-    return 1;
-  }
-  mpz_init_set_ui(pow10z[0], 1);
-  for (int i = 1; i < NPOW; i++) {
-    mpz_init(pow10z[i]);
-    mpz_mul_ui(pow10z[i], pow10z[i - 1], 10);
-  }
+  long n = setup(argc, argv);
   /* a probe of each file: 1 / 3 and 0.5 printed with no decimals */
   da_inexact = 0;
   da_div(da_from_integer(1), da_from_integer(3));
@@ -1045,8 +1054,9 @@ int main(int argc, char **argv) {
   da_snprintf(half, sizeof half, ".0f",
               da_from_integer_and_biased_exp(5, BIAS - 1));
   inexact_printf = da_inexact;
-  printf("inexact flag %s in dec-alpha.c, %s in da_printing.c\n",
-         inexact_arith ? "on" : "off", inexact_printf ? "on" : "off");
+  printf("seed %" PRIu64 ", inexact flag %s in dec-alpha.c, %s in "
+         "da_printing.c\n", seed, inexact_arith ? "on" : "off",
+         inexact_printf ? "on" : "off");
   section("roundtrip", test_roundtrip, n);
   section("from_integer", test_from_integer, n);
   section("add", test_add, n);
@@ -1057,9 +1067,10 @@ int main(int argc, char **argv) {
   section("strtoda", test_strtoda, n);
   section("compare", test_compare, n);
   section("fma", test_fma, n);
+  section("mult_integer", test_mult_integer, n);
   section("quantize", test_quantize, n);
   section("to_string", test_to_string, n);
   section("snprintf", test_snprintf, n);
-  printf("random: %ld checks, %ld failures\n", checks, failures);
-  return failures != 0;
+  printf("random: %ld checks, all passed\n", checks);
+  return 0;
 }

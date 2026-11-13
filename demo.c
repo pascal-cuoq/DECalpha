@@ -193,6 +193,16 @@ int main(void)
   da_print(da_fma(da_from_integer(20015998343868873), five, (da){1}));
   puts(" (20015998343868873*5+1E-142, the tie broken upward)");
   da_print(da_fma(DA_INFINITY, DA_ZERO, one));puts(" (inf*0+1)");
+  puts("\nProduct by an integer and a power of ten:");
+  da_print(da_mult_integer(three, 7, 0));puts(" (3*7)");
+  da_print(da_mult_integer(three, -25, -3));puts(" (3*-25*10^-3)");
+  da_print(da_mult_integer(pi, 5729577951308232088, -17));
+  puts(" (pi radians in degrees)");
+  da_print(da_degrees_of_radians(pi));
+  puts(" (the same by da_degrees_of_radians)");
+  da_print(da_mult_integer(da_from_integer(180), 1745329251994329577,
+                           -20));
+  puts(" (180 degrees in radians)");
   puts("\nComparison:");
   printf("%d (compare(1, 2))\n", da_compare(one, two));
   printf("%d (compare(2, 1))\n", da_compare(two, one));

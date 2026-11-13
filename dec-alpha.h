@@ -64,6 +64,61 @@ da da_mult(da dx, da dy);
 da da_div(da dx, da dy);
 da da_sqrt(da dx);
 
+/* x * y * 10^z with a single rounding. Zeros, infinities and NaN are
+   those of da_mult, y behaving like +0 when it is 0.
+   z must be between -30000 and 30000.
+   This provides a needlessly slow implementation of IEEE 754's scaleB
+   when setting y to 1, convenient in the absence of an efficient one
+   in this minimalistic library. */
+/*@ requires -30000 <= z <= 30000; */
+da da_mult_integer(da x, int64_t y, int z);
+
+/* Sine and cosine of an angle in degrees, in da_sincos.c. The argument
+   is reduced exactly, so the results of the angles that are exact in
+   degrees are as expected: da_sin(180) is 0, da_cos(90) is 0 and
+   da_sin(30) is 0.5. Both return NaN for an infinite argument and
+   are within 0.504 unit in the last place of the exact value. A zero
+   result has the sign of x in da_sin and is +0 in da_cos, as in IEEE
+   754's sinPi and cosPi. The inexact flag, in the build that raises
+   it, is raised unless the result is exact. By Niven's theorem, the
+   only exact results are 0, 0.5, 1, -0.5 and -1, which occur only at
+   some multiples of 30. */
+da da_sin(da x);
+da da_cos(da x);
+
+typedef struct { da sin, cos; } da_pair;
+
+/* The sine and the cosine of one angle. The inexact flag is raised
+   unless both are exact, that is, unless x is a multiple of 90. */
+da_pair da_sincos(da x);
+
+/* Tangent of an angle in degrees, within 0.519 unit in the last
+   place of the exact value: da_tan(45) is 1, and the zeros and
+   infinities are the quotients of da_sin by da_cos, as IEEE 754's
+   tanPi, so da_tan(180) is -0, da_tan(90) is +inf and da_tan(270)
+   is -inf. The inexact flag is raised unless the result is 0, 1, -1
+   or infinite for an argument of the form 45*n. */
+da da_tan(da x);
+
+/* x radians in degrees, for the functions above, in da_sincos.c,
+   within 0.503 unit in the last place of the exact value. The inexact
+   flag is raised unless x is a zero, an infinity or NaN, π being
+   irrational, when dec-alpha.c is built to raise it. */
+da da_degrees_of_radians(da x);
+
+/* Ten to the power x and the logarithm in base ten, in da_log.c,
+   within 0.531 and 0.511 unit in the last place of the exact value. Base
+   ten makes the reduction of the argument exact, and so are the results
+   that can be: da_exp10 of an integer n from -142 to 128 is 10^n,
+   da_log10 of 10^n is n, and da_log10(1) is +0. da_exp10 overflows
+   to +inf and underflows to the subnormals and to +0, and is +inf
+   and +0 at the infinities. da_log10 is -inf for a zero of either
+   sign, NaN for a negative x, and +inf for +inf. The inexact flag,
+   in the build that raises it, is raised unless the result is one
+   of the above, a zero or an infinity from a finite x excepted. */
+da da_exp10(da x);
+da da_log10(da x);
+
 /* x rounded to a multiple of 10^e in the rounding mode given, one of the
    constants below, or infinite when that exceeds the largest finite value.
    This is IEEE 754's quantize, without the restriction on the number of

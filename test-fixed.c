@@ -234,6 +234,118 @@ static const struct { const char *op, *x, *y, *z, *want; } cases[] = {
   {"pred", "-nan", NULL, NULL, "-nan"},
   {"neg", "0", NULL, NULL, "-0"},
   {"neg", "nan", NULL, NULL, "-nan"},
+  /* sine and cosine: exact angles, signs of zero results as sinPi and
+     cosPi, special values, underflow, and 1e128, a multiple of 40
+     degrees like every value of magnitude 4e18 or more: 280 here */
+  {"sin", "0", NULL, NULL, "0"}, {"sin", "-0", NULL, NULL, "-0"},
+  {"sin", "30", NULL, NULL, "0.5"}, {"sin", "90", NULL, NULL, "1"},
+  {"sin", "180", NULL, NULL, "0"}, {"sin", "-180", NULL, NULL, "-0"},
+  {"sin", "270", NULL, NULL, "-1"}, {"sin", "-360", NULL, NULL, "-0"},
+  {"sin", "inf", NULL, NULL, "nan"}, {"sin", "-nan", NULL, NULL, "-nan"},
+  {"cos", "-0", NULL, NULL, "1"}, {"cos", "60", NULL, NULL, "0.5"},
+  {"cos", "90", NULL, NULL, "0"}, {"cos", "-90", NULL, NULL, "0"},
+  {"cos", "270", NULL, NULL, "0"}, {"cos", "180", NULL, NULL, "-1"},
+  {"cos", "-inf", NULL, NULL, "nan"},
+  {"sin", "1e-142", NULL, NULL, "0"}, {"sin", "-1e-142", NULL, NULL, "-0"},
+  {"sin", "45", NULL, NULL, "0.7071067811865475"},
+  {"sin", "10", NULL, NULL, "0.17364817766693035"},
+  {"cos", "4.5", NULL, NULL, "0.996917333733128"},
+  {"sin", "1e128", NULL, NULL, "-0.9848077530122081"},
+  {"cos", "1e128", NULL, NULL, "0.17364817766693035"},
+  /* tangent: the signs of zeros and infinities are those of the
+     quotient of the sine by the cosine, as tanPi */
+  {"tan", "0", NULL, NULL, "0"}, {"tan", "-0", NULL, NULL, "-0"},
+  {"tan", "45", NULL, NULL, "1"}, {"tan", "135", NULL, NULL, "-1"},
+  {"tan", "-45", NULL, NULL, "-1"}, {"tan", "225", NULL, NULL, "1"},
+  {"tan", "180", NULL, NULL, "-0"}, {"tan", "-180", NULL, NULL, "0"},
+  {"tan", "360", NULL, NULL, "0"}, {"tan", "-360", NULL, NULL, "-0"},
+  {"tan", "90", NULL, NULL, "inf"}, {"tan", "-90", NULL, NULL, "-inf"},
+  {"tan", "270", NULL, NULL, "-inf"}, {"tan", "-270", NULL, NULL, "inf"},
+  {"tan", "inf", NULL, NULL, "nan"}, {"tan", "nan", NULL, NULL, "nan"},
+  {"tan", "1e-142", NULL, NULL, "0"}, {"tan", "-1e-142", NULL, NULL, "-0"},
+  {"tan", "60", NULL, NULL, "1.7320508075688773"},
+  {"tan", "10", NULL, NULL, "0.17632698070846497"},
+  {"tan", "1", NULL, NULL, "0.017455064928217586"},
+  {"tan", "89", NULL, NULL, "57.289961630759424"},
+  {"tan", "89.99999999999999", NULL, NULL, "5729577951308232"},
+  {"tan", "1e128", NULL, NULL, "-5.6712818196177096"},
+  /* radians to degrees: the special values unchanged, pi and its
+     fractions, a subnormal argument, and both sides of the threshold
+     of overflow */
+  {"degrees", "0", NULL, NULL, "0"}, {"degrees", "-0", NULL, NULL, "-0"},
+  {"degrees", "inf", NULL, NULL, "inf"},
+  {"degrees", "-inf", NULL, NULL, "-inf"},
+  {"degrees", "nan", NULL, NULL, "nan"},
+  {"degrees", "-nan", NULL, NULL, "-nan"},
+  {"degrees", "3.1415926535897932", NULL, NULL, "180"},
+  {"degrees", "-1.5707963267948966", NULL, NULL, "-90"},
+  {"degrees", "0.5235987755982989", NULL, NULL, "30.000000000000002"},
+  {"degrees", "1", NULL, NULL, "57.29577951308232"},
+  {"degrees", "1e-142", NULL, NULL, "57e-142"},
+  {"degrees", "-6e-142", NULL, NULL, "-344e-142"},
+  {"degrees", "6.986e126", NULL, NULL, "40026831567839309e112"},
+  {"degrees", "6.987e126", NULL, NULL, "inf"},
+  /* ten to the x: exact for the integers, overflow and underflow at
+     their thresholds, subnormal results, and arguments too small to
+     move the result from 1 */
+  {"exp10", "0", NULL, NULL, "1"}, {"exp10", "-0", NULL, NULL, "1"},
+  {"exp10", "1", NULL, NULL, "10"}, {"exp10", "-1", NULL, NULL, "0.1"},
+  {"exp10", "128", NULL, NULL, "1e128"},
+  {"exp10", "-142", NULL, NULL, "1e-142"},
+  {"exp10", "-143", NULL, NULL, "0"},
+  {"exp10", "0.5", NULL, NULL, "3.1622776601683793"},
+  {"exp10", "-0.5", NULL, NULL, "0.31622776601683793"},
+  {"exp10", "3.5", NULL, NULL, "3162.2776601683793"},
+  {"exp10", "0.001", NULL, NULL, "1.0023052380778997"},
+  {"exp10", "-0.001", NULL, NULL, "0.9977000638225533"},
+  {"exp10", "0.3010299956639812", NULL, NULL, "2"},
+  {"exp10", "1e-16", NULL, NULL, "1.0000000000000002"},
+  {"exp10", "1e-17", NULL, NULL, "1"},
+  {"exp10", "-1e-30", NULL, NULL, "1"},
+  {"exp10", "128.60240716181945", NULL, NULL, "4.003198836781788e128"},
+  {"exp10", "128.7", NULL, NULL, "inf"},
+  {"exp10", "-127.5", NULL, NULL, "3.16227766016838e-128"},
+  {"exp10", "-141.5", NULL, NULL, "3e-142"},
+  {"exp10", "-142.3", NULL, NULL, "1e-142"},
+  {"exp10", "-142.4", NULL, NULL, "0"},
+  {"exp10", "inf", NULL, NULL, "inf"}, {"exp10", "-inf", NULL, NULL, "0"},
+  {"exp10", "nan", NULL, NULL, "nan"},
+  {"exp10", "-nan", NULL, NULL, "-nan"},
+  /* logarithm: exact for the powers of ten, the subnormal one
+     included, next to 1 on both sides, at both ends of the zone
+     around 1, and the special values */
+  {"log10", "1", NULL, NULL, "0"}, {"log10", "10", NULL, NULL, "1"},
+  {"log10", "0.001", NULL, NULL, "-3"},
+  {"log10", "1e128", NULL, NULL, "128"},
+  {"log10", "1e-142", NULL, NULL, "-142"},
+  {"log10", "3e-142", NULL, NULL, "-141.52287874528034"},
+  {"log10", "2", NULL, NULL, "0.3010299956639812"},
+  {"log10", "0.5", NULL, NULL, "-0.3010299956639812"},
+  {"log10", "40031996687737742e112", NULL, NULL, "128.60240725207964"},
+  {"log10", "1.0000000000000001", NULL, NULL, "4.342944819032518e-17"},
+  {"log10", "0.9999999999999999", NULL, NULL,
+   "-4.342944819032518e-17"},
+  {"log10", "1.1", NULL, NULL, "0.04139268515822504"},
+  {"log10", "1.126", NULL, NULL, "0.05153839051532742"},
+  {"log10", "0.9007199254740992", NULL, NULL, "-0.04541022980899665"},
+  {"log10", "0.9007199254740991", NULL, NULL, "-0.0454102298089967"},
+  {"log10", "0", NULL, NULL, "-inf"}, {"log10", "-0", NULL, NULL, "-inf"},
+  {"log10", "-1", NULL, NULL, "nan"}, {"log10", "inf", NULL, NULL, "inf"},
+  {"log10", "-inf", NULL, NULL, "nan"},
+  {"log10", "nan", NULL, NULL, "nan"},
+  {"log10", "-nan", NULL, NULL, "-nan"},
+  /* results next to a midpoint: the exact value of each is within
+     0.033 unit in the last place of the middle of two values. A
+     directed search found them as the results the furthest from
+     their exact value, before the constants of the sine, of ten to
+     the x and of the logarithm were centred on their truncations:
+     the nearest value is now returned, but by the tangent, 0.518
+     unit off, still its furthest known. */
+  {"sin", "20.000002326099886", NULL, NULL, "0.34202018147540508"},
+  {"cos", "69.99985387402882", NULL, NULL, "0.3420225398971834"},
+  {"tan", "88.56894477291725", NULL, NULL, "40.029108327406578"},
+  {"exp10", "1.5987025164455447", NULL, NULL, "39.69195738858039"},
+  {"log10", "1.0000092103453737", NULL, NULL, "3.9999837516334096e-6"},
 };
 
 static da apply(const char *op, da x, da y, da z) {
@@ -242,9 +354,15 @@ static da apply(const char *op, da x, da y, da z) {
   case '*': return da_mult(x, y);
   case '/': return da_div(x, y);
   case 'f': return da_fma(x, y, z);
+  case 'c': return da_cos(x);
+  case 'd': return da_degrees_of_radians(x);
+  case 'e': return da_exp10(x);
+  case 'l': return da_log10(x);
   case 'n': return da_neg(x);
   case 'p': return da_pred(x);
-  default: return op[1] == 'q' ? da_sqrt(x) : da_succ(x);
+  case 't': return da_tan(x);
+  default: return op[1] == 'q' ? da_sqrt(x) : op[1] == 'i' ? da_sin(x)
+                                                           : da_succ(x);
   }
 }
 
@@ -255,8 +373,11 @@ static void test_cases(void) {
     const char *z = cases[i].z ? cases[i].z : "";
     snprintf(what, sizeof what, "%s %s %s %s", cases[i].op, cases[i].x,
              y, z);
-    expect(what, apply(cases[i].op, val(cases[i].x), val(y), val(z)),
-           val(cases[i].want));
+    da x = val(cases[i].x), want = val(cases[i].want);
+    expect(what, apply(cases[i].op, x, val(y), val(z)), want);
+    /* da_sincos must return the same sine and the same cosine */
+    if (!strcmp(cases[i].op, "sin")) expect(what, da_sincos(x).sin, want);
+    if (!strcmp(cases[i].op, "cos")) expect(what, da_sincos(x).cos, want);
   }
 }
 
@@ -348,6 +469,59 @@ static void test_quantize(void) {
   }
 }
 
+/* ---- mult_integer: x * y * 10^z, with the inexact flag of each case: the
+   product by an integer, the signs of zero, y being a positive zero when
+   0, the special values, ties inside a decade and at its top, the
+   conversions between radians and degrees, the ends of y, overflow,
+   subnormal results and underflow ---- */
+
+static const struct {
+  const char *x; int64_t y; int z; const char *want; int inexact;
+} multiplied[] = {
+  {"1", 3, 0, "3", 0}, {"0.1", 3, 0, "0.3", 0},
+  {"-1.5", 7, 2, "-1050", 0}, {"1.5", -7, -2, "-0.105", 0},
+  {"-1.5", -7, 0, "10.5", 0},
+  {"0", -5, 0, "-0", 0}, {"-0", -5, 0, "0", 0}, {"-0", 5, 3, "-0", 0},
+  {"-3", 0, 0, "-0", 0}, {"3", 0, 5, "0", 0}, {"0", 0, 0, "0", 0},
+  {"inf", -2, 0, "-inf", 0}, {"-inf", INT64_MIN, -30000, "inf", 0},
+  {"inf", 0, 0, "nan", 0}, {"-inf", 0, 7, "nan", 0},
+  {"nan", 0, 0, "nan", 0},
+  {"20015998343868871", 5, 0, "100079991719344360", 1},
+  {"20015998343868873", 5, 0, "100079991719344360", 1},
+  {"20015998343868873", 2, 0, "40031996687737742", 1},
+  {"20015998343868871", 2, 0, "40031996687737742", 0},
+  {"3.1415926535897932", 5729577951308232088, -17, "180", 1},
+  {"0.5235987755982989", 5729577951308232088, -17,
+   "30.000000000000002", 1},
+  {"180", 1745329251994329577, -20, "3.1415926535897932", 1},
+  {"90", 1745329251994329577, -20, "1.5707963267948966", 1},
+  {"1", INT64_MIN, 0, "-9223372036854776000", 1},
+  {"1e-142", INT64_MAX, 0, "9223372036854776e-139", 1},
+  {"40031996687737742", INT64_MIN, 0, "-36922999882914330e19", 1},
+  {"1e128", 4, 0, "4e128", 0}, {"1e128", 5, 0, "inf", 1},
+  {"1", 40031996687737746, 112, "40031996687737742e112", 1},
+  {"1", 40031996687737747, 112, "inf", 1},
+  {"-1e-142", 1, 30000, "-inf", 1},
+  {"1e-10", 1, -132, "1e-142", 0}, {"1e-10", 1, -133, "0", 1},
+  {"7", 1, -142, "7e-142", 0}, {"7", -1, -143, "-1e-142", 1},
+  {"1e-142", 5, -1, "0", 1}, {"1e-142", 6, -1, "1e-142", 1},
+  {"1e-142", 15, -1, "2e-142", 1},
+  {"4003199668773775e-142", 9, -1, "3602879701896398e-142", 1},
+  {"1e-142", 123456789012345678, -17, "1e-142", 1},
+  {"1e128", -1, -30000, "-0", 1},
+};
+
+static void test_mult_integer(void) {
+  char what[100];
+  for (unsigned i = 0; i < sizeof multiplied / sizeof *multiplied; i++) {
+    snprintf(what, sizeof what, "mult_integer %s %" PRId64 " %d",
+             multiplied[i].x, multiplied[i].y, multiplied[i].z);
+    expect(what, da_mult_integer(val(multiplied[i].x), multiplied[i].y,
+                                 multiplied[i].z),
+           val(multiplied[i].want));
+  }
+}
+
 /* ---- comparisons: -0 equals +0 numerically and precedes it in the total
    order; NaNs are unordered numerically and at the ends of the total order
    ---- */
@@ -405,6 +579,8 @@ static void test_nan(void) {
   expect("fma inf*0 before nan z", da_fma(DA_INFINITY, DA_ZERO, b),
          DA_NAN);
   expect("quantize nan", da_quantize(b, 3, AWAY), b);
+  expect("mult_integer nan", da_mult_integer(b, -3, 2), b);
+  expect("mult_integer nan by 0", da_mult_integer(a, 0, 0), a);
   expect("succ nan", da_succ(b), b);
   expect("neg nan", da_neg(b), (da){b.r ^ SIGN});
 }
@@ -634,6 +810,28 @@ static const struct {
   {"fma", "7", "1.1111111111111111", "inf", 0},
   {"neg", "0.1", NULL, NULL, 0}, {"succ", "1", NULL, NULL, 0},
   {"pred", "1", NULL, NULL, 0},
+  {"sin", "0", NULL, NULL, 0}, {"sin", "30", NULL, NULL, 0},
+  {"cos", "60", NULL, NULL, 0}, {"cos", "30", NULL, NULL, 1},
+  {"cos", "90", NULL, NULL, 0}, {"sin", "1e-142", NULL, NULL, 1},
+  {"cos", "1e-142", NULL, NULL, 1},
+  {"tan", "0", NULL, NULL, 0}, {"tan", "45", NULL, NULL, 0},
+  {"tan", "-135", NULL, NULL, 0}, {"tan", "90", NULL, NULL, 0},
+  {"tan", "180", NULL, NULL, 0}, {"tan", "30", NULL, NULL, 1},
+  {"tan", "44", NULL, NULL, 1}, {"tan", "1e-142", NULL, NULL, 1},
+  {"exp10", "0", NULL, NULL, 0}, {"exp10", "-142", NULL, NULL, 0},
+  {"exp10", "128", NULL, NULL, 0}, {"exp10", "0.5", NULL, NULL, 1},
+  {"exp10", "1e-30", NULL, NULL, 1}, {"exp10", "-143", NULL, NULL, 1},
+  {"exp10", "129", NULL, NULL, 1}, {"exp10", "inf", NULL, NULL, 0},
+  {"exp10", "-inf", NULL, NULL, 0}, {"exp10", "nan", NULL, NULL, 0},
+  {"log10", "1", NULL, NULL, 0}, {"log10", "1e-142", NULL, NULL, 0},
+  {"log10", "1000", NULL, NULL, 0}, {"log10", "2", NULL, NULL, 1},
+  {"log10", "0", NULL, NULL, 0}, {"log10", "-1", NULL, NULL, 0},
+  {"log10", "inf", NULL, NULL, 0},
+  {"degrees", "0", NULL, NULL, 0}, {"degrees", "-inf", NULL, NULL, 0},
+  {"degrees", "nan", NULL, NULL, 0}, {"degrees", "1", NULL, NULL, 1},
+  {"degrees", "3.1415926535897932", NULL, NULL, 1},
+  {"degrees", "1e-142", NULL, NULL, 1},
+  {"degrees", "1e128", NULL, NULL, 1},
 };
 
 static const struct {
@@ -697,6 +895,14 @@ static void test_inexact(void) {
     da_quantize(x, flagged_q[i].e, flagged_q[i].mode);
     expect_flag(what, arith && flagged_q[i].inexact);
   }
+  for (size_t i = 0; i < sizeof multiplied / sizeof *multiplied; i++) {
+    da x = val(multiplied[i].x);
+    snprintf(what, sizeof what, "mult_integer %s %" PRId64 " %d",
+             multiplied[i].x, multiplied[i].y, multiplied[i].z);
+    da_inexact = 0;
+    da_mult_integer(x, multiplied[i].y, multiplied[i].z);
+    expect_flag(what, arith && multiplied[i].inexact);
+  }
   for (size_t i = 0; i < sizeof flagged_n / sizeof *flagged_n; i++) {
     da_inexact = 0;
     strtoda(flagged_n[i].in, NULL);
@@ -737,6 +943,7 @@ int main(int argc, char **argv) {
   test_numerals();
   test_cases();
   test_quantize();
+  test_mult_integer();
   test_ordering();
   test_nan();
   test_printing();

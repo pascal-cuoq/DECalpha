@@ -176,8 +176,10 @@ integers the representations transformed by
 
 ## The library
 
-The library is the files `dec-alpha.c` and `da_printing.c`, with their
-interface in `dec-alpha.h`, and `demo.c` is a program that shows it off.
+The library is the files `dec-alpha.c`, `da_printing.c`,
+`da_sincos.c` and `da_log.c`, with their interface in `dec-alpha.h`
+and what they share among themselves in `da_internal.h`, and `demo.c`
+is a program that shows it off.
 `dec-alpha.c` holds the arithmetic, the comparisons and the conversions
 from and to strings, and depends on nothing beyond `sqrt` from
 `math.h`, whose binary floating-point root seeds `da_sqrt`.[^fenv]
@@ -229,6 +231,12 @@ and declares the functions:
   form and the setting of `errno`;
 * `da_neg`, `da_add`, `da_mult`, `da_div`, `da_sqrt` and `da_fma`,
   correctly rounded for all inputs, including special values;
+* `da_mult_integer(da x, int64_t y, int z)`, `x` × `y` × 10^`z` with a
+  single rounding: the product by an integer, or by a constant of 18 or
+  19 digits, more than a `da` holds. The angles of `da_sin` being in
+  degrees, `da_mult_integer(x, 5729577951308232088, -17)` converts `x`
+  from radians, which is `da_degrees_of_radians`, and
+  `da_mult_integer(x, 1745329251994329577, -20)` back;
 * `da_quantize(da x, int e, int mode)`, `x` rounded to a multiple of
   10^e, which is IEEE 754's `quantize` without the restriction on the
   number of digits of the result: a value too large to have digits below
@@ -240,6 +248,35 @@ and declares the functions:
   banker's rounding;
 * `da_succ` and `da_pred`, the next value toward +inf and toward −inf,
   as IEEE 754's `nextUp` and `nextDown`;
+* `da_sin` and `da_cos`, in `da_sincos.c`, the sine and cosine of an
+  angle in degrees, within 0.504 unit in the last place of the exact
+  value. The reduction of the argument is exact, so the angles that
+  are exact in degrees give the expected results, `da_cos(90)` being
+  0 and `da_sin(30)` 0.5, and a zero result has the sign that IEEE
+  754's `sinPi` and `cosPi` give it. The kernels work in 64-bit fixed
+  point, with a table of sines and cosines 4.5 degrees apart,
+  and round to decimal once, at the end;
+* `da_tan`, the tangent of an angle in degrees, within 0.519 unit in
+  the last place: the quotient of the fixed-point sine and cosine,
+  by one 128-bit division, with no table or polynomial of its own.
+  `da_tan(45)` is 1, and the zeros and infinities have the signs of
+  IEEE 754's `tanPi`, `da_tan(90)` being +inf and `da_tan(180)` −0;
+* `da_sincos`, the sine and the cosine of one angle, as a `da_pair`
+  of the values `da_sin` and `da_cos` return: they share the
+  reduction and the polynomials, so the pair costs about a third
+  more than one of them;
+* `da_degrees_of_radians`, also in `da_sincos.c`, an angle in radians
+  converted for the functions above: one `da_mult_integer` by 180/π
+  to 19 digits, within 0.503 unit in the last place;
+* `da_exp10` and `da_log10`, in `da_log.c`, ten to the power x and the
+  logarithm in base ten, within 0.531 and 0.511 unit in the last place.
+  The base makes the reduction of the argument exact, as degrees do for the
+  angles: `da_exp10` of an integer is the power of ten, `da_log10` of
+  a power of ten is the integer, and they are otherwise inexact.
+  `da_exp10` computes in 64-bit fixed point from a table of sixteen
+  powers and a polynomial; `da_log10` from fourteen logarithms, one
+  128-bit division and a polynomial, and keeps its precision next
+  to 1, where the result is small;
 * `da_compare`, returning −1, 0, 1 or `DA_UNORDERED` (which is 2, so
   that comparing the result to 0 with `<`, `<=`, `==` or `!=` gives the
   IEEE 754 quiet predicate of that name, and `>` and `>=` are obtained by
@@ -285,13 +322,15 @@ infinity or NaN being the defined result, not a rounded one.
 
 Raising the flag is a compile-time option, taken file by file:
 `dec-alpha.c` compiled with `DA_INEXACT` defined raises it in the
-operations and in the conversions from integers and strings, and
-`da_printing.c` compiled with `DA_INEXACT_PRINTF` defined raises it in
-`da_snprintf` and `da_asprintf` when the precision drops nonzero
-digits. A file compiled without its macro never touches the flag. The
-variable and its declaration exist in every build, so that a program
-compiles against the same header whatever the choice, which is made
-when linking: the Makefile builds `dec-alpha-inexact.o` and
+operations and in the conversions from integers and strings,
+`da_sincos.c` and `da_log.c` compiled with the same macro raise it in
+their functions, and `da_printing.c` compiled with `DA_INEXACT_PRINTF`
+defined raises it in `da_snprintf` and `da_asprintf` when the
+precision drops nonzero digits. A file compiled without its macro
+never touches the flag. The variable and its declaration exist in
+every build, so that a program compiles against the same header
+whatever the choice, which is made when linking: the Makefile builds
+`dec-alpha-inexact.o`, `da_sincos-inexact.o`, `da_log-inexact.o` and
 `da_printing-inexact.o` beside the plain objects. The option costs a
 store per rounded result, one to three nanoseconds per operation on a
 current processor.[^tls]

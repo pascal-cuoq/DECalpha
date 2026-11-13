@@ -1,6 +1,6 @@
 ## Testing
 
-The command `make check` builds and runs two test programs:
+The command `make check` builds and runs three test programs:
 
   - `test-fixed.c` checks hand-written tricky cases with expected
     results: syntax and rounding of `strtoda` on long numerals, signs
@@ -12,6 +12,8 @@ The command `make check` builds and runs two test programs:
   - `test-random.c` checks the library against an oracle built on GMP
     rationals. It requires GMP. The command `./test-random seed count`
     chooses the random seed and the number of iterations per section.
+    The seed defaults to the time in seconds since 1970, and the first
+    line of output reports it, so that a failing run can be repeated.
 
     The oracle is a single function that rounds a rational to the
     nearest DEC α value, or to the nearest value of its square root,
@@ -31,6 +33,48 @@ The command `make check` builds and runs two test programs:
     test prints how many exact ties each section met. `da_succ` and
     `da_pred` are checked for adjacency by rounding the midpoint of
     the two values nudged slightly either way.
+
+  - `test-math-random.c` measures the error of the functions of
+    `da_sincos.c` and `da_log.c`, which are not correctly rounded,
+    against MPFR at 256 bits. It requires MPFR and GMP, and takes the
+    arguments of `test-random`. It prints for each function the
+    largest error it met and the argument that produced it. Errors
+    must stay within the bound that `dec-alpha.h` documents for the
+    function, and signs, zeros, infinities and NaNs must be those of
+    the exact result. `da_sin`, `da_cos`, `da_tan` and `da_sincos`
+    share one section, its angles and one call of `mpfr_sin_cos` per
+    angle: the pair must be the sine and the cosine, with the flag of
+    either. The arguments are uniform or drawn around
+    the hard cases: multiples of 15 degrees, where the exact results
+    are, neighbors of multiples of 45 degrees, small angles, integers
+    and the thresholds of overflow and underflow for `da_exp10`,
+    powers of ten and neighbors of 1 for `da_log10`, results at the
+    top of a decade for `da_degrees_of_radians`.
+
+    The error is in units in the last place of the exact result,
+    which are of three kinds: 10^e inside a decade, 8 × 10^e in the
+    gap between the top of the decade and the bottom of the next, and
+    10^(e+1) from there. The exact and the computed result may lie in
+    intervals of different units, a question every floating-point
+    format has at its powers of the radix and this one twice per
+    decade. The test settles it with the representation: consecutive
+    values have consecutive representations, so the exact result has
+    a position between two of them, the fraction of the way from one
+    value to the next, and the error is the distance from that
+    position to the representation computed. Next to the exact
+    result this is the usual definition, the difference divided by
+    the distance between the two values around the exact result.
+    Farther, each interval crossed counts for one whatever its width,
+    so that an error below 0.5 always means a correctly rounded
+    result, which the usual definition does not guarantee when the
+    computed result falls into the finer interval below the exact
+    one.
+
+The two random tests share `test-random.h`: the decoding of a
+representation into GMP integers and rationals, the random generator,
+the handling of the command line and the stop at the first failure,
+which shows the arguments, the results and the seed that repeats the
+run.
 
 Each test program is linked with both builds of the library, and
 checks the inexact flag against the build: in the build with the
@@ -88,20 +132,23 @@ for the scaling it needs.
     whose divisor is not a power of ten, since division passes the
     divisor's significand.
 
-  - `da_round_wide` serves `strtoda` and `da_fma`, whose exact results
-    can land anywhere over dozens of decades: a parsed 19-digit mantissa
-    with an arbitrary exponent, or a 128-bit product plus addend that may
-    have cancelled massively. A loop would be too long here, so it
-    uses the decade lookup. It also owns cases the others never meet:
-    a result already exact, finished with a single 64-bit multiply and
-    no division, which matters for fma, and a subnormal result whose
-    divisor exceeds 64 bits and is built from two table entries. Its
+  - `da_round_wide` serves `strtoda`, `da_fma` and `da_mult_integer`,
+    whose exact results can land anywhere over dozens of decades: a
+    parsed 19-digit mantissa with an arbitrary exponent, a 128-bit
+    product plus addend that may have cancelled massively, or the
+    product of a significand by an integer of 1 to 19 digits, which is
+    all that `da_mult_integer` computes before it. A loop would be too
+    long here, so it uses the decade lookup. It also owns cases the
+    others never meet: a result already exact, finished with a single
+    64-bit multiply and no division, which matters for fma and for the
+    product by a small integer, and a subnormal result whose divisor
+    exceeds 64 bits and is built from two table entries. Its
     exponent floor of -34 comes from the fma alignment: an addend
     scaled up by 10^33 to meet the product of two subnormals, then by
     10 more to make room for the sticky digit. `strtoda`, which clamps
-    its decimal exponent to ±300, passes exponents down to -159, but
-    the underflow test turns everything below -35 into zero before the
-    exponent is used.
+    its decimal exponent to ±300, passes exponents down to -159, and
+    `da_mult_integer` down to -30000, but the underflow test turns
+    everything below -35 into zero before the exponent is used.
 
   - `da_from_integer_and_biased_exp` is effectively a fourth front-end
     for `da_round`. It allows the user of the library to create values,
